@@ -1,0 +1,8 @@
+{
+  "name": "Feather",
+  "description": "A lightweight, fast, privacy-conscious Android web browser with profile isolation, tracker blocking, and Material You design.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

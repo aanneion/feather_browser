@@ -1,0 +1,91 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Glowing Background Radial Aura -->
+    <path
+        android:pathData="M54,20 C72.78,20 88,35.22 88,54 C88,72.78 72.78,88 54,88 C35.22,88 20,72.78 20,54 C20,35.22 35.22,20 54,20 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="40"
+                android:startColor="#4038BDF8"
+                android:endColor="#00000000"
+                android:type="radial" />
+        </aapt:attr>
+    </path>
+
+    <!-- Upper Aerodynamic Vane (Cyan to Electric Indigo) -->
+    <path
+        android:pathData="M54,24 C64,26 77,35 75,51 C69,52 62,48 56,42 C54.5,40.5 53.5,38 54,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="45"
+                android:startColor="#38BDF8"
+                android:endColor="#6366F1"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Mid Right Feather Barb (Frosted Cyan) -->
+    <path
+        android:pathData="M75,51 C72,58 65,65 57,60 C55,53 59,47 75,51 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="90"
+                android:startColor="#06B6D4"
+                android:endColor="#3B82F6"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Lower Right Barb -->
+    <path
+        android:pathData="M57,60 C54,66 49,73 45,74 C43.5,69 46,62 57,60 Z"
+        android:fillColor="#60A5FA" />
+
+    <!-- Left Main Feather Body (Deep Sapphire to Sky Blue) -->
+    <path
+        android:pathData="M54,24 C44,32 33,45 33,60 C33,70 40,77 45,83 C47,77 46,65 49,57 C52,49 53,36 54,24 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:angle="135"
+                android:startColor="#0EA5E9"
+                android:endColor="#1D4ED8"
+                android:type="linear" />
+        </aapt:attr>
+    </path>
+
+    <!-- Left Inner Accent Slice -->
+    <path
+        android:pathData="M52,33 C45,43 39,53 39,63 C44,61 48,53 50,43 Z"
+        android:fillColor="#93C5FD" />
+
+    <!-- Feather Quill Spine (Luminous Crystal White) -->
+    <path
+        android:strokeWidth="2.5"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M54,22 C53,37 49,56 43,86" />
+
+    <!-- Quill Tip Highlight -->
+    <path
+        android:strokeWidth="1.5"
+        android:strokeColor="#38BDF8"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M43,86 L40,91" />
+
+    <!-- Floating Aerodynamic Speed Dots -->
+    <path
+        android:pathData="M77,32 C77,30.9 77.9,30 79,30 C80.1,30 81,30.9 81,32 C81,33.1 80.1,34 79,34 C77.9,34 77,33.1 77,32 Z"
+        android:fillColor="#38BDF8" />
+    <path
+        android:pathData="M82,43 C82,42.2 82.7,41.5 83.5,41.5 C84.3,41.5 85,42.2 85,43 C85,43.8 84.3,44.5 83.5,44.5 C82.7,44.5 82,43.8 82,43 Z"
+        android:fillColor="#93C5FD" />
+</vector>
