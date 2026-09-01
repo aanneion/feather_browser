@@ -45,17 +45,24 @@ jobs:
           echo "Target Tag: ${TAG} (Version: ${VER})"
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '21'
           distribution: 'microsoft'
           cache: gradle
 
+      - name: Setup Android Keystore for Release
+        run: |
+          if [ ! -f debug.keystore ]; then
+            echo "Generating build debug.keystore for signing..."
+            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --no-daemon -Dkotlin.compiler.execution.strategy=daemon --stacktrace
 
       - name: Prepare Release Assets
         id: prepare_asset
@@ -92,4 +99,5 @@ jobs:
             release-assets/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
