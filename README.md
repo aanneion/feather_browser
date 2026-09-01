@@ -6,9 +6,9 @@
   <strong>An ultra-lightweight (~1.3 MB), high-performance, privacy-first Android browser featuring true isolated multi-profiles with custom device fingerprint spoofing.</strong>
 </p>
 
-[![GitHub Release](https://img.shields.io/github/v/release/Likhon545466/lightweight_browser?style=for-the-badge&color=2563EB&logo=github)](https://github.com/Likhon545466/lightweight_browser/releases/latest)
-[![CI Status](https://img.shields.io/github/actions/workflow/status/Likhon545466/lightweight_browser/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/Likhon545466/lightweight_browser/actions)
-[![APK Size](https://img.shields.io/badge/APK_Size-~1.3_MB-10B981?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Likhon545466/lightweight_browser/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/aanneion/lightweight_browser?style=for-the-badge&color=2563EB&logo=github)](https://github.com/aanneion/lightweight_browser/releases/latest)
+[![CI Status](https://img.shields.io/github/actions/workflow/status/aanneion/lightweight_browser/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/aanneion/lightweight_browser/actions)
+[![APK Size](https://img.shields.io/badge/APK_Size-~1.3_MB-10B981?style=for-the-badge&logo=android&logoColor=white)](https://github.com/aanneion/lightweight_browser/releases/latest)
 [![Platform](https://img.shields.io/badge/Platform-Android_8.0+_(API_24+)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://www.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose_M3-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
@@ -16,7 +16,7 @@
 
 <br />
 
-[📥 Download Latest APK (v1.0.8)](https://github.com/Likhon545466/lightweight_browser/releases/latest) • [🌟 Core Differentiators](#-core-differentiators) • [🛡️ Multi-Profile Isolation](#-isolated-multi-profiles--fingerprint-spoofing) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source)
+[📥 Download Latest APK (v1.0.8)](https://github.com/aanneion/lightweight_browser/releases/latest) • [🌟 Core Differentiators](#-core-differentiators) • [🛡️ Multi-Profile Isolation](#-isolated-multi-profiles--fingerprint-spoofing) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source)
 
 ---
 
@@ -123,7 +123,7 @@ graph TD
 ### Clone & Build
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Likhon545466/lightweight_browser.git
+git clone https://github.com/aanneion/lightweight_browser.git
 cd lightweight_browser
 
 # 2. Run Tests
