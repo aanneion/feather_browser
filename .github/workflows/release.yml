@@ -71,6 +71,13 @@ jobs:
           sha256sum "Feather-Browser-Release.apk" > "Feather-Browser-Release.apk.sha256"
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
 
+      - name: Upload APK as Workflow Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.version_step.outputs.apk_name }}
+          path: release-assets/*
+          retention-days: 90
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -79,6 +86,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: false
           prerelease: false
+          make_latest: true
           generate_release_notes: true
           files: |
             release-assets/*
