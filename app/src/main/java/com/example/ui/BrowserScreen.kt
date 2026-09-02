@@ -181,9 +181,9 @@ fun BrowserScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
+                            .zIndex(if (isActive) 1f else 0f)
                             .graphicsLayer {
                                 alpha = if (isActive) 1f else 0f
-                                translationX = if (isActive) 0f else 50000f
                             }
                     ) {
                         key(tab.id) {

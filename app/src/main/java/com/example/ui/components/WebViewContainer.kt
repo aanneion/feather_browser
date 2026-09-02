@@ -24,10 +24,65 @@ import com.example.browser.WebViewAction
 import com.example.data.model.BrowserProfile
 import com.example.privacy.ContentBlocker
 import com.example.privacy.FingerprintScriptGenerator
+import com.example.media.MediaControlAction
+import com.example.media.MediaSessionManager
 import kotlinx.coroutines.flow.SharedFlow
+import android.content.Context
+import androidx.webkit.WebViewCompat
 
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+class PersistentWebView(context: Context) : WebView(context) {
+    var allowBackgroundPlayback: Boolean = true
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        if (allowBackgroundPlayback) {
+            super.onWindowVisibilityChanged(View.VISIBLE)
+        } else {
+            super.onWindowVisibilityChanged(visibility)
+        }
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        if (allowBackgroundPlayback) {
+            super.onVisibilityChanged(changedView, View.VISIBLE)
+        } else {
+            super.onVisibilityChanged(changedView, visibility)
+        }
+    }
+}
+
+class FeatherMediaBridge(
+    private val context: Context,
+    private val tabId: String
+) {
+    @JavascriptInterface
+    fun updateMetadata(title: String, artist: String, album: String, artworkUrl: String) {
+        MediaSessionManager.updateMetadata(context, tabId, title, artist, album, artworkUrl)
+    }
+
+    @JavascriptInterface
+    fun updatePlaybackState(isPlaying: Boolean) {
+        MediaSessionManager.updatePlaybackState(context, tabId, isPlaying)
+    }
+
+    @JavascriptInterface
+    fun onMediaPlaying(title: String, artist: String) {
+        MediaSessionManager.updateMetadata(context, tabId, title, artist)
+        MediaSessionManager.updatePlaybackState(context, tabId, true)
+    }
+
+    @JavascriptInterface
+    fun onMediaPaused() {
+        MediaSessionManager.updatePlaybackState(context, tabId, false)
+    }
+
+    @JavascriptInterface
+    fun onMediaEnded() {
+        MediaSessionManager.onMediaEnded(context, tabId)
+    }
+}
 
 @SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
@@ -117,6 +172,56 @@ fun WebViewContainer(
         }
     }
 
+    LaunchedEffect(tabId) {
+        MediaSessionManager.controlActions.collect { action ->
+            val playingTab = MediaSessionManager.activeMediaTabId.value
+            val isTargetTab = (playingTab == tabId) || (playingTab == null && viewModel.activeTabId.value == tabId)
+            if (isTargetTab) {
+                when (action) {
+                    MediaControlAction.PLAY -> {
+                        webViewRef?.evaluateJavascript(
+                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();",
+                            null
+                        )
+                    }
+                    MediaControlAction.PAUSE -> {
+                        webViewRef?.evaluateJavascript(
+                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();",
+                            null
+                        )
+                    }
+                    MediaControlAction.TOGGLE_PLAY_PAUSE -> {
+                        val isPlaying = MediaSessionManager.isPlaying.value
+                        val script = if (isPlaying) {
+                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
+                        } else {
+                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
+                        }
+                        webViewRef?.evaluateJavascript(script, null)
+                    }
+                    MediaControlAction.NEXT -> {
+                        webViewRef?.evaluateJavascript(
+                            "if (window.__feather_media_next) window.__feather_media_next();",
+                            null
+                        )
+                    }
+                    MediaControlAction.PREVIOUS -> {
+                        webViewRef?.evaluateJavascript(
+                            "if (window.__feather_media_prev) window.__feather_media_prev();",
+                            null
+                        )
+                    }
+                    MediaControlAction.STOP -> {
+                        webViewRef?.evaluateJavascript(
+                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();",
+                            null
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     key(tabId, renderCrashCount) {
         Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             AndroidView(
@@ -131,7 +236,9 @@ fun WebViewContainer(
                     }
                     val themedContext = ctx.createConfigurationContext(overrideConfig)
 
-                    WebView(themedContext).apply {
+                    PersistentWebView(themedContext).apply {
+                        allowBackgroundPlayback = enableBackgroundPlay
+                        addJavascriptInterface(FeatherMediaBridge(ctx.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -455,6 +562,9 @@ fun WebViewContainer(
                 },
                 update = { webView ->
                     webViewRef = webView
+                    if (webView is PersistentWebView) {
+                        webView.allowBackgroundPlayback = enableBackgroundPlay
+                    }
                     if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
                         val cur = webView.url ?: ""
                         if (cur.isEmpty() || cur == "about:blank") {
