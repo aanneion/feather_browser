@@ -66,4 +66,57 @@ object FingerprintScriptGenerator {
         })();
         """.trimIndent()
     }
+
+    /**
+     * Injects a background audio/video playback shim that prevents YouTube and HTML5 video players
+     * from pausing when the app is placed into the background or switched away.
+     */
+    fun generateBackgroundPlayScript(): String {
+        return """
+        (function() {
+            try {
+                if (window.__bg_play_injected) return;
+                window.__bg_play_injected = true;
+
+                // Override Page Visibility API so media sites (YouTube, SoundCloud, Spotify) think the tab is always active
+                Object.defineProperty(document, 'hidden', {
+                    get: function() { return false; },
+                    configurable: true
+                });
+                Object.defineProperty(document, 'visibilityState', {
+                    get: function() { return 'visible'; },
+                    configurable: true
+                });
+                Object.defineProperty(document, 'webkitHidden', {
+                    get: function() { return false; },
+                    configurable: true
+                });
+                Object.defineProperty(document, 'webkitVisibilityState', {
+                    get: function() { return 'visible'; },
+                    configurable: true
+                });
+
+                // Prevent visibilitychange events from pausing playback
+                window.addEventListener('visibilitychange', function(e) {
+                    e.stopImmediatePropagation();
+                }, true);
+                document.addEventListener('visibilitychange', function(e) {
+                    e.stopImmediatePropagation();
+                }, true);
+
+                // Auto unpause when video/audio receives an automated pause while playing in background
+                const originalPlay = HTMLMediaElement.prototype.play;
+                const originalPause = HTMLMediaElement.prototype.pause;
+
+                HTMLMediaElement.prototype.pause = function() {
+                    // If user paused manually, allow it; if triggered by page hide, continue playing
+                    if (document.visibilityState === 'visible' && !document.hidden) {
+                        return originalPause.apply(this, arguments);
+                    }
+                    return Promise.resolve();
+                };
+            } catch(e) {}
+        })();
+        """.trimIndent()
+    }
 }

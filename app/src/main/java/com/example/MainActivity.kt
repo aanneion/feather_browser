@@ -28,10 +28,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
             val useMaterialYou by viewModel.useMaterialYou.collectAsStateWithLifecycle()
+            val isPrivateMode by viewModel.isPrivateMode.collectAsStateWithLifecycle()
 
             MyApplicationTheme(
                 themeMode = themeMode,
-                useMaterialYou = useMaterialYou
+                useMaterialYou = useMaterialYou,
+                isPrivateMode = isPrivateMode
             ) {
                 BrowserScreen(
                     viewModel = viewModel,

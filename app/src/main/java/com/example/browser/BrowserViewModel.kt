@@ -94,6 +94,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val blockThirdPartyCookies = MutableStateFlow(true)
     val httpsMode = MutableStateFlow(HttpsMode.PREFER_HTTPS)
     val enableWebDarkMode = MutableStateFlow(false)
+    val enableBackgroundPlay = MutableStateFlow(true)
     val downloadProvider = MutableStateFlow(DownloadProvider.BUILT_IN)
 
     fun setThemeMode(mode: AppThemeMode) {
@@ -106,6 +107,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun setNewTabStyle(style: NewTabStyle) {
         newTabStyle.value = style
+    }
+
+    fun setBackgroundPlay(enabled: Boolean) {
+        enableBackgroundPlay.value = enabled
     }
 
     fun setDownloadProvider(provider: DownloadProvider) {

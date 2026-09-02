@@ -52,6 +52,8 @@ fun SettingsScreen(
     onHttpsModeChange: (HttpsMode) -> Unit,
     enableWebDarkMode: Boolean,
     onToggleWebDarkMode: (Boolean) -> Unit,
+    enableBackgroundPlay: Boolean,
+    onToggleBackgroundPlay: (Boolean) -> Unit,
     downloadProvider: DownloadProvider,
     onDownloadProviderChange: (DownloadProvider) -> Unit,
     onOpenClearData: () -> Unit,
@@ -86,11 +88,13 @@ fun SettingsScreen(
             Surface(
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                 tonalElevation = 4.dp,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.statusBars)
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -348,6 +352,37 @@ fun SettingsScreen(
                                 )
                             }
                         }
+                    }
+                }
+            }
+
+            // Section: MEDIA & BACKGROUND PLAYBACK
+            item(key = "media_section") {
+                GlassySettingsCard(
+                    title = "MEDIA & BACKGROUND PLAYBACK",
+                    icon = Icons.Default.PlayCircle
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Background Play (YouTube & Media)",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Keep audio and video playing when switching tabs or minimizing the browser",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enableBackgroundPlay,
+                            onCheckedChange = onToggleBackgroundPlay
+                        )
                     }
                 }
             }

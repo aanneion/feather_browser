@@ -1,11 +1,15 @@
 package com.example.ui.theme
 
+import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 import com.example.browser.AppThemeMode
 
 private val LightColorScheme = lightColorScheme(
@@ -67,6 +71,7 @@ private val AmoledColorScheme = darkColorScheme(
 fun MyApplicationTheme(
     themeMode: AppThemeMode = AppThemeMode.SYSTEM,
     useMaterialYou: Boolean = true,
+    isPrivateMode: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
@@ -97,6 +102,18 @@ fun MyApplicationTheme(
         isAmoled -> AmoledColorScheme
         isDark -> DarkColorScheme
         else -> LightColorScheme
+    }
+
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as? Activity)?.window
+            if (window != null) {
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                insetsController.isAppearanceLightStatusBars = !isDark && !isPrivateMode
+                insetsController.isAppearanceLightNavigationBars = !isDark && !isPrivateMode
+            }
+        }
     }
 
     MaterialTheme(

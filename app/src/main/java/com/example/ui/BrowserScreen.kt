@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.browser.*
 import com.example.ui.components.*
@@ -45,6 +46,7 @@ fun BrowserScreen(
     val blockThirdPartyCookies by viewModel.blockThirdPartyCookies.collectAsStateWithLifecycle()
     val httpsMode by viewModel.httpsMode.collectAsStateWithLifecycle()
     val enableWebDarkMode by viewModel.enableWebDarkMode.collectAsStateWithLifecycle()
+    val enableBackgroundPlay by viewModel.enableBackgroundPlay.collectAsStateWithLifecycle()
     val downloadProvider by viewModel.downloadProvider.collectAsStateWithLifecycle()
     val adBlockExceptions by viewModel.adBlockExceptions.collectAsStateWithLifecycle()
     val quickShortcuts by viewModel.quickShortcuts.collectAsStateWithLifecycle()
@@ -94,6 +96,8 @@ fun BrowserScreen(
                 onHttpsModeChange = { viewModel.httpsMode.value = it },
                 enableWebDarkMode = enableWebDarkMode,
                 onToggleWebDarkMode = { viewModel.enableWebDarkMode.value = it },
+                enableBackgroundPlay = enableBackgroundPlay,
+                onToggleBackgroundPlay = { viewModel.setBackgroundPlay(it) },
                 downloadProvider = downloadProvider,
                 onDownloadProviderChange = { viewModel.setDownloadProvider(it) },
                 onOpenClearData = { showClearDataDialog = true },
@@ -178,40 +182,46 @@ fun BrowserScreen(
 
             Scaffold(
                 topBar = {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.statusBars)
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 5.dp,
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Top URL Bar
-                        AddressBar(
-                            activeTab = activeTabState,
-                            currentProfile = currentProfile,
-                            isPrivateMode = isPrivateMode,
-                            tabCount = currentTabs.size,
-                            isBookmarked = isBookmarked,
-                            onNavigate = {
-                                focusManager.clearFocus(force = true)
-                                viewModel.navigateTo(it)
-                            },
-                            onReload = { viewModel.reload() },
-                            onStop = { viewModel.stopLoading() },
-                            onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
-                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
-                            onOpenMenu = { showMenuSheet = true }
-                        )
-
-                        if (isFindInPageActive) {
-                            FindInPageBar(
-                                query = findQuery,
-                                matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
-                                matchTotal = activeTabState?.searchMatchCount ?: 0,
-                                onQueryChange = { viewModel.setFindQuery(it) },
-                                onFindNext = { forward -> viewModel.findNext(forward) },
-                                onClose = { viewModel.closeFindInPage() }
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.statusBars)
+                        ) {
+                            // Top URL Bar
+                            AddressBar(
+                                activeTab = activeTabState,
+                                currentProfile = currentProfile,
+                                isPrivateMode = isPrivateMode,
+                                tabCount = currentTabs.size,
+                                isBookmarked = isBookmarked,
+                                onNavigate = {
+                                    focusManager.clearFocus(force = true)
+                                    viewModel.navigateTo(it)
+                                },
+                                onReload = { viewModel.reload() },
+                                onStop = { viewModel.stopLoading() },
+                                onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
+                                onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                                onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                                onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                                onOpenMenu = { showMenuSheet = true }
                             )
+
+                            if (isFindInPageActive) {
+                                FindInPageBar(
+                                    query = findQuery,
+                                    matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
+                                    matchTotal = activeTabState?.searchMatchCount ?: 0,
+                                    onQueryChange = { viewModel.setFindQuery(it) },
+                                    onFindNext = { forward -> viewModel.findNext(forward) },
+                                    onClose = { viewModel.closeFindInPage() }
+                                )
+                            }
                         }
                     }
                 },
@@ -227,6 +237,7 @@ fun BrowserScreen(
                         onOpenMenu = { showMenuSheet = true }
                     )
                 },
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 modifier = modifier.fillMaxSize()
             ) { innerPadding ->
                 Box(
@@ -261,6 +272,7 @@ fun BrowserScreen(
                                     whitelistedDomains = whitelistedDomains,
                                     blockThirdPartyCookies = blockThirdPartyCookies,
                                     enableWebDarkMode = enableWebDarkMode,
+                                    enableBackgroundPlay = enableBackgroundPlay,
                                     isDarkTheme = isDarkTheme,
                                     currentProfile = currentProfile,
                                     viewModel = viewModel,

@@ -39,6 +39,7 @@ fun WebViewContainer(
     whitelistedDomains: Set<String>,
     blockThirdPartyCookies: Boolean,
     enableWebDarkMode: Boolean,
+    enableBackgroundPlay: Boolean,
     isDarkTheme: Boolean,
     currentProfile: BrowserProfile?,
     viewModel: BrowserViewModel,
@@ -277,6 +278,14 @@ fun WebViewContainer(
                                     try {
                                         val script = FingerprintScriptGenerator.generateInjectionScript(activePreset)
                                         view?.evaluateJavascript(script, null)
+                                    } catch (e: Exception) { }
+                                }
+
+                                // Inject Background Audio/Video playback script (YouTube, SoundCloud, etc.)
+                                if (enableBackgroundPlay) {
+                                    try {
+                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
+                                        view?.evaluateJavascript(bgScript, null)
                                     } catch (e: Exception) { }
                                 }
                             }

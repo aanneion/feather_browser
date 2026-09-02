@@ -32,11 +32,13 @@ fun BrowserBottomBar(
     Surface(
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 6.dp,
-        modifier = modifier
-            .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
+        modifier = modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+        ) {
             HorizontalDivider(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                 thickness = 1.dp
