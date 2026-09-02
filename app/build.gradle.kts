@@ -9,12 +9,15 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
+  val envVersionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 108
+  val envVersionName = System.getenv("APP_VERSION_NAME") ?: "1.0.108"
+
   defaultConfig {
     applicationId = "com.aistudio.browser.lwbxbz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 8
-    versionName = "1.0.8"
+    versionCode = envVersionCode
+    versionName = envVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

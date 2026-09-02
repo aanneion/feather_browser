@@ -29,9 +29,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract Version
+      - name: Compute and Increment Version
         id: version_step
         run: |
+          RUN_NUM="${{ github.run_number }}"
+          CALC_CODE=$((100 + RUN_NUM))
+          
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG="${{ github.ref_name }}"
             VER="${TAG#v}"
@@ -39,13 +42,16 @@ jobs:
             TAG="${{ inputs.tag_name }}"
             VER="${TAG#v}"
           else
-            # Extract versionName from app/build.gradle.kts
-            VER=$(grep 'versionName = ' app/build.gradle.kts | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+            VER="1.0.${CALC_CODE}"
             TAG="v${VER}"
           fi
+          
+          echo "APP_VERSION_CODE=${CALC_CODE}" >> $GITHUB_ENV
+          echo "APP_VERSION_NAME=${VER}" >> $GITHUB_ENV
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "version=${VER}" >> $GITHUB_OUTPUT
-          echo "Target Tag: ${TAG} (Version: ${VER})"
+          echo "version_code=${CALC_CODE}" >> $GITHUB_OUTPUT
+          echo "Target Tag: ${TAG} (Version Name: ${VER}, Version Code: ${CALC_CODE})"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
