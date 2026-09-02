@@ -68,53 +68,44 @@ object FingerprintScriptGenerator {
     }
 
     /**
-     * Injects a background audio/video playback shim that prevents YouTube and HTML5 video players
-     * from pausing when the app is placed into the background or switched away.
+     * Injects a background audio/video playback shim that prevents YouTube, SoundCloud, Spotify,
+     * and HTML5 video players from pausing when switching tabs or backgrounding the app.
      */
     fun generateBackgroundPlayScript(): String {
         return """
         (function() {
             try {
-                if (window.__bg_play_injected) return;
-                window.__bg_play_injected = true;
+                if (window.__feather_bg_play_active) return;
+                window.__feather_bg_play_active = true;
 
-                // Override Page Visibility API so media sites (YouTube, SoundCloud, Spotify) think the tab is always active
-                Object.defineProperty(document, 'hidden', {
-                    get: function() { return false; },
-                    configurable: true
-                });
-                Object.defineProperty(document, 'visibilityState', {
-                    get: function() { return 'visible'; },
-                    configurable: true
-                });
-                Object.defineProperty(document, 'webkitHidden', {
-                    get: function() { return false; },
-                    configurable: true
-                });
-                Object.defineProperty(document, 'webkitVisibilityState', {
-                    get: function() { return 'visible'; },
-                    configurable: true
-                });
+                // 1. Override Page Visibility API so media sites always consider the tab active
+                try {
+                    Object.defineProperty(document, 'hidden', { get: function() { return false; }, configurable: true });
+                    Object.defineProperty(document, 'visibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    Object.defineProperty(document, 'webkitHidden', { get: function() { return false; }, configurable: true });
+                    Object.defineProperty(document, 'webkitVisibilityState', { get: function() { return 'visible'; }, configurable: true });
+                    document.hasFocus = function() { return true; };
+                } catch(e) {}
 
-                // Prevent visibilitychange events from pausing playback
-                window.addEventListener('visibilitychange', function(e) {
-                    e.stopImmediatePropagation();
-                }, true);
-                document.addEventListener('visibilitychange', function(e) {
-                    e.stopImmediatePropagation();
-                }, true);
-
-                // Auto unpause when video/audio receives an automated pause while playing in background
-                const originalPlay = HTMLMediaElement.prototype.play;
-                const originalPause = HTMLMediaElement.prototype.pause;
-
-                HTMLMediaElement.prototype.pause = function() {
-                    // If user paused manually, allow it; if triggered by page hide, continue playing
-                    if (document.visibilityState === 'visible' && !document.hidden) {
-                        return originalPause.apply(this, arguments);
+                // 2. Intercept registration of visibility pause event listeners
+                const origAddEventListener = EventTarget.prototype.addEventListener;
+                EventTarget.prototype.addEventListener = function(type, listener, options) {
+                    if (type === 'visibilitychange' || type === 'webkitvisibilitychange' || type === 'pagehide') {
+                        return;
                     }
-                    return Promise.resolve();
+                    return origAddEventListener.apply(this, arguments);
                 };
+
+                // 3. Suppress any existing or bubbling visibilitychange & blur events
+                const suppressEvents = ['visibilitychange', 'webkitvisibilitychange', 'pagehide', 'blur'];
+                suppressEvents.forEach(function(evt) {
+                    window.addEventListener(evt, function(e) {
+                        if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
+                    }, true);
+                    document.addEventListener(evt, function(e) {
+                        if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
+                    }, true);
+                });
             } catch(e) {}
         })();
         """.trimIndent()

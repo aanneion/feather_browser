@@ -82,6 +82,9 @@ fun WebViewContainer(
     LaunchedEffect(tabId, webViewRef) {
         val webView = webViewRef ?: return@LaunchedEffect
         actions.collect { action ->
+            if (action.targetTabId != null && action.targetTabId != tabId) {
+                return@collect
+            }
             when (action) {
                 is WebViewAction.LoadUrl -> {
                     webView.loadUrl(action.url)
@@ -252,23 +255,33 @@ fun WebViewContainer(
                             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                 super.onPageStarted(view, url, favicon)
                                 url?.let {
-                                    viewModel.onPageStarted(it)
+                                    viewModel.onPageStarted(tabId, it)
                                 }
                                 viewModel.onNavigationStateChanged(
+                                    tabId = tabId,
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false
                                 )
+
+                                // Early injection of Background Audio/Video playback script
+                                if (enableBackgroundPlay) {
+                                    try {
+                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
+                                        view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
                             }
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
                                 url?.let {
-                                    viewModel.onPageFinished(it)
+                                    viewModel.onPageFinished(tabId, it)
                                 }
                                 view?.title?.let {
-                                    viewModel.onTitleChanged(it)
+                                    viewModel.onTitleChanged(tabId, it)
                                 }
                                 viewModel.onNavigationStateChanged(
+                                    tabId = tabId,
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false
                                 )
@@ -324,7 +337,7 @@ fun WebViewContainer(
                                         "UTF-8",
                                         null
                                     )
-                                    viewModel.onPageLoadError()
+                                    viewModel.onPageLoadError(tabId)
                                 }
                             }
 
@@ -403,12 +416,12 @@ fun WebViewContainer(
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 super.onProgressChanged(view, newProgress)
-                                viewModel.onProgressChanged(newProgress)
+                                viewModel.onProgressChanged(tabId, newProgress)
                             }
 
                             override fun onReceivedTitle(view: WebView?, title: String?) {
                                 super.onReceivedTitle(view, title)
-                                title?.let { viewModel.onTitleChanged(it) }
+                                title?.let { viewModel.onTitleChanged(tabId, it) }
                             }
 
                             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {

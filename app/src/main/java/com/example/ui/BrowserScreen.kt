@@ -11,12 +11,15 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.browser.*
+import com.example.data.model.*
 import com.example.ui.components.*
 
 @Composable
@@ -240,29 +243,43 @@ fun BrowserScreen(
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 modifier = modifier.fillMaxSize()
             ) { innerPadding ->
+                val activeTabId = activeTabState?.id ?: ""
+                val openTabs = remember(currentTabs, activeTabState) {
+                    val list = currentTabs.filter { it.url.isNotBlank() && it.url != "about:blank" }.toMutableList()
+                    activeTabState?.let { active ->
+                        if (active.url.isNotBlank() && active.url != "about:blank" && list.none { it.id == active.id }) {
+                            list.add(
+                                BrowserTab(
+                                    id = active.id,
+                                    profileId = active.profileId,
+                                    url = active.url,
+                                    title = active.title,
+                                    isDesktopMode = active.isDesktopMode,
+                                    isPrivate = active.isPrivate
+                                )
+                            )
+                        }
+                    }
+                    list
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
                         .background(MaterialTheme.colorScheme.background)
                 ) {
-                    if (isHome) {
-                        NewTabPage(
-                            currentProfile = currentProfile,
-                            isPrivateMode = isPrivateMode,
-                            searchEngine = searchEngine,
-                            bookmarks = bookmarks,
-                            shortcuts = quickShortcuts,
-                            newTabStyle = newTabStyle,
-                            onNavigate = { viewModel.navigateTo(it) },
-                            onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
-                            onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
-                            onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
-                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) }
-                        )
-                    } else {
-                        activeTabState?.let { tab ->
+                    // Persistent WebViews for all open tabs to keep background playback and prevent reloads
+                    for (tab in openTabs) {
+                        val isActive = (tab.id == activeTabId && !isHome)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = if (isActive) 1f else 0f
+                                    translationX = if (isActive) 0f else 50000f
+                                }
+                        ) {
                             key(tab.id) {
                                 WebViewContainer(
                                     tabId = tab.id,
@@ -279,6 +296,30 @@ fun BrowserScreen(
                                     actions = viewModel.webViewActionEvent
                                 )
                             }
+                        }
+                    }
+
+                    if (isHome) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(10f)
+                                .background(MaterialTheme.colorScheme.background)
+                        ) {
+                            NewTabPage(
+                                currentProfile = currentProfile,
+                                isPrivateMode = isPrivateMode,
+                                searchEngine = searchEngine,
+                                bookmarks = bookmarks,
+                                shortcuts = quickShortcuts,
+                                newTabStyle = newTabStyle,
+                                onNavigate = { viewModel.navigateTo(it) },
+                                onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
+                                onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
+                                onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
+                                onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                                onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) }
+                            )
                         }
                     }
                 }

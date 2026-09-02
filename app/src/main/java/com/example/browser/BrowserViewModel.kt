@@ -424,7 +424,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 _activeTabId.value = tabId
             }
             val curState = _activeTabState.value
-            if (curState == null) {
+            if (curState == null || curState.id != tabId) {
                 _activeTabState.value = ActiveTabState(
                     id = tabId,
                     profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
@@ -438,10 +438,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 _activeTabState.update { it?.copy(url = parsedUrl, progress = 10, isLoading = true) }
             }
             viewModelScope.launch {
-                _webViewActionEvent.emit(WebViewAction.LoadUrl(parsedUrl))
+                _webViewActionEvent.emit(WebViewAction.LoadUrl(parsedUrl, targetTabId = tabId))
                 val cur = currentTabs.value.find { it.id == tabId }
                 if (cur != null) {
-                    repository.saveTab(cur.copy(url = parsedUrl))
+                    repository.saveTab(cur.copy(url = parsedUrl, lastAccessedAt = System.currentTimeMillis()))
                 } else {
                     repository.saveTab(
                         BrowserTab(
@@ -458,39 +458,44 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun reload() {
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload) }
+        val tabId = _activeTabId.value
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId)) }
     }
 
     fun stopLoading() {
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.StopLoading) }
+        val tabId = _activeTabId.value
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId)) }
     }
 
     fun goBack() {
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoBack) }
+        val tabId = _activeTabId.value
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoBack(targetTabId = tabId)) }
     }
 
     fun goForward() {
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoForward) }
+        val tabId = _activeTabId.value
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoForward(targetTabId = tabId)) }
     }
 
     fun goHome() {
         val tabId = _activeTabId.value
         _activeTabState.update { it?.copy(url = "", title = "New Tab", progress = 0, isLoading = false) }
         viewModelScope.launch {
-            _webViewActionEvent.emit(WebViewAction.LoadUrl("about:blank"))
+            _webViewActionEvent.emit(WebViewAction.LoadUrl("about:blank", targetTabId = tabId))
             val cur = currentTabs.value.find { it.id == tabId }
             if (cur != null) {
-                repository.saveTab(cur.copy(url = "", title = "New Tab"))
+                repository.saveTab(cur.copy(url = "", title = "New Tab", lastAccessedAt = System.currentTimeMillis()))
             }
         }
     }
 
     fun toggleDesktopMode() {
+        val tabId = _activeTabId.value
         val newDesktop = !(_activeTabState.value?.isDesktopMode ?: false)
         _activeTabState.update { it?.copy(isDesktopMode = newDesktop) }
         viewModelScope.launch {
-            _webViewActionEvent.emit(WebViewAction.SetDesktopMode(newDesktop))
-            val cur = currentTabs.value.find { it.id == _activeTabId.value }
+            _webViewActionEvent.emit(WebViewAction.SetDesktopMode(newDesktop, targetTabId = tabId))
+            val cur = currentTabs.value.find { it.id == tabId }
             if (cur != null) {
                 repository.saveTab(cur.copy(isDesktopMode = newDesktop))
             }
@@ -503,18 +508,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun closeFindInPage() {
+        val tabId = _activeTabId.value
         _isFindInPageActive.value = false
         _findQuery.value = ""
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.ClearFindMatches) }
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.ClearFindMatches(targetTabId = tabId)) }
     }
 
     fun setFindQuery(query: String) {
+        val tabId = _activeTabId.value
         _findQuery.value = query
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindAllAsync(query)) }
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindAllAsync(query, targetTabId = tabId)) }
     }
 
     fun findNext(forward: Boolean) {
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindNext(forward)) }
+        val tabId = _activeTabId.value
+        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindNext(forward, targetTabId = tabId)) }
     }
 
     fun onFindMatchResult(activeMatchOrdinal: Int, numberOfMatches: Int) {
@@ -527,51 +535,58 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // Callbacks from WebView
-    fun onPageStarted(url: String) {
+    fun onPageStarted(tabId: String, url: String) {
         if (url.isBlank() || url == "about:blank") {
-            _activeTabState.update { it?.copy(isLoading = false, progress = 0) }
+            if (tabId == _activeTabId.value) {
+                _activeTabState.update { it?.copy(isLoading = false, progress = 0) }
+            }
             return
         }
-        onUrlChanged(url)
-        _activeTabState.update {
-            it?.copy(
-                isLoading = true,
-                progress = it.progress.coerceIn(15, 90)
-            )
+        onUrlChanged(tabId, url)
+        if (tabId == _activeTabId.value) {
+            _activeTabState.update {
+                it?.copy(
+                    isLoading = true,
+                    progress = it.progress.coerceIn(15, 90)
+                )
+            }
         }
     }
 
-    fun onPageFinished(url: String) {
-        _activeTabState.update {
-            it?.copy(
-                isLoading = false,
-                progress = 100
-            )
+    fun onPageFinished(tabId: String, url: String) {
+        if (tabId == _activeTabId.value) {
+            _activeTabState.update {
+                it?.copy(
+                    isLoading = false,
+                    progress = 100
+                )
+            }
         }
     }
 
-    fun onPageLoadError() {
-        _activeTabState.update {
-            it?.copy(
-                isLoading = false,
-                progress = 100
-            )
+    fun onPageLoadError(tabId: String) {
+        if (tabId == _activeTabId.value) {
+            _activeTabState.update {
+                it?.copy(
+                    isLoading = false,
+                    progress = 100
+                )
+            }
         }
     }
 
-    fun onUrlChanged(url: String) {
+    fun onUrlChanged(tabId: String, url: String) {
         if (url.isBlank() || url == "about:blank") return
         val isSec = UrlUtils.isHttps(url)
-        val tabId = _activeTabId.value
         val blocked = ContentBlocker.getBlockCountForTab(tabId)
         
-        val curState = _activeTabState.value
-        if (curState?.url == url && curState.isSecure == isSec && curState.blockedCount == blocked) {
-            return
-        }
-
-        _activeTabState.update {
-            it?.copy(url = url, isSecure = isSec, blockedCount = blocked)
+        if (tabId == _activeTabId.value) {
+            val curState = _activeTabState.value
+            if (curState?.url != url || curState.isSecure != isSec || curState.blockedCount != blocked) {
+                _activeTabState.update {
+                    it?.copy(url = url, isSecure = isSec, blockedCount = blocked)
+                }
+            }
         }
         viewModelScope.launch {
             val cur = currentTabs.value.find { it.id == tabId }
@@ -581,13 +596,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onTitleChanged(title: String) {
+    fun onTitleChanged(tabId: String, title: String) {
         if (title.isBlank() || title == "about:blank") return
-        val tabId = _activeTabId.value
-        val curState = _activeTabState.value
-        if (curState?.title == title) return
-
-        _activeTabState.update { it?.copy(title = title) }
+        if (tabId == _activeTabId.value) {
+            val curState = _activeTabState.value
+            if (curState?.title != title) {
+                _activeTabState.update { it?.copy(title = title) }
+            }
+        }
         viewModelScope.launch {
             val cur = currentTabs.value.find { it.id == tabId }
             if (cur != null) {
@@ -595,7 +611,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     repository.saveTab(cur.copy(title = title))
                 }
                 // Record history if not private
-                val url = _activeTabState.value?.url ?: ""
+                val url = if (tabId == _activeTabId.value) _activeTabState.value?.url ?: cur.url else cur.url
                 if (url.isNotBlank() && url != "about:blank") {
                     repository.recordHistory(
                         profileId = cur.profileId,
@@ -608,7 +624,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onProgressChanged(progress: Int) {
+    fun onProgressChanged(tabId: String, progress: Int) {
+        if (tabId != _activeTabId.value) return
         val curState = _activeTabState.value ?: return
         // If on Home or about:blank, keep loading disabled
         if (curState.url.isBlank() || curState.url == "about:blank") {
@@ -630,7 +647,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onNavigationStateChanged(canGoBack: Boolean, canGoForward: Boolean) {
+    fun onNavigationStateChanged(tabId: String, canGoBack: Boolean, canGoForward: Boolean) {
+        if (tabId != _activeTabId.value) return
         val curState = _activeTabState.value ?: return
         if (curState.canGoBack == canGoBack && curState.canGoForward == canGoForward) {
             return
@@ -804,13 +822,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 }
 
 sealed class WebViewAction {
-    data class LoadUrl(val url: String) : WebViewAction()
-    data object Reload : WebViewAction()
-    data object StopLoading : WebViewAction()
-    data object GoBack : WebViewAction()
-    data object GoForward : WebViewAction()
-    data class SetDesktopMode(val enabled: Boolean) : WebViewAction()
-    data class FindAllAsync(val query: String) : WebViewAction()
-    data class FindNext(val forward: Boolean) : WebViewAction()
-    data object ClearFindMatches : WebViewAction()
+    abstract val targetTabId: String?
+
+    data class LoadUrl(val url: String, override val targetTabId: String? = null) : WebViewAction()
+    data class Reload(override val targetTabId: String? = null) : WebViewAction()
+    data class StopLoading(override val targetTabId: String? = null) : WebViewAction()
+    data class GoBack(override val targetTabId: String? = null) : WebViewAction()
+    data class GoForward(override val targetTabId: String? = null) : WebViewAction()
+    data class SetDesktopMode(val enabled: Boolean, override val targetTabId: String? = null) : WebViewAction()
+    data class FindAllAsync(val query: String, override val targetTabId: String? = null) : WebViewAction()
+    data class FindNext(val forward: Boolean, override val targetTabId: String? = null) : WebViewAction()
+    data class ClearFindMatches(override val targetTabId: String? = null) : WebViewAction()
 }
