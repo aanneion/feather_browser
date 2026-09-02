@@ -64,18 +64,6 @@ fun WebViewContainer(
 
     val activeSearchEngine = viewModel.searchEngine.collectAsState().value
 
-    // Sync URL when initialUrl or webViewRef changes
-    LaunchedEffect(tabId, initialUrl, webViewRef) {
-        if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
-            webViewRef?.let { webView ->
-                val currentUrl = webView.url ?: ""
-                if (currentUrl != initialUrl) {
-                    webView.loadUrl(initialUrl)
-                }
-            }
-        }
-    }
-
     var renderCrashCount by remember(tabId) { mutableStateOf(0) }
 
     // Handle incoming actions from ViewModel
@@ -264,6 +252,29 @@ fun WebViewContainer(
                                 )
 
                                 // Early injection of Background Audio/Video playback script
+                                if (enableBackgroundPlay) {
+                                    try {
+                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
+                                        view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
+                            }
+
+                            override fun onPageCommitVisible(view: WebView?, url: String?) {
+                                super.onPageCommitVisible(view, url)
+                                if (enableBackgroundPlay) {
+                                    try {
+                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
+                                        view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
+                            }
+
+                            override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                                super.doUpdateVisitedHistory(view, url, isReload)
+                                url?.let {
+                                    viewModel.onUrlChanged(tabId, it)
+                                }
                                 if (enableBackgroundPlay) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()

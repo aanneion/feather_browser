@@ -22,20 +22,23 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
-  val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
+  val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/release.keystore")
+  val debugKeystore = file("${rootDir}/debug.keystore")
   signingConfigs {
     create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
+      if (debugKeystore.exists()) {
+        storeFile = debugKeystore
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
     }
-    if (releaseKeystore.exists()) {
-      create("release") {
+    create("releaseConfig") {
+      if (releaseKeystore.exists()) {
         storeFile = releaseKeystore
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-        keyPassword = System.getenv("KEY_PASSWORD")
+        storePassword = System.getenv("STORE_PASSWORD") ?: "feather123"
+        keyAlias = System.getenv("KEY_ALIAS") ?: "feather_release_key"
+        keyPassword = System.getenv("KEY_PASSWORD") ?: "feather123"
       }
     }
   }
@@ -49,10 +52,10 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro"
       )
-      if (releaseKeystore.exists()) {
-        signingConfig = signingConfigs.getByName("release")
+      signingConfig = if (releaseKeystore.exists()) {
+        signingConfigs.getByName("releaseConfig")
       } else {
-        signingConfig = signingConfigs.getByName("debugConfig")
+        signingConfigs.getByName("debugConfig")
       }
     }
     debug {

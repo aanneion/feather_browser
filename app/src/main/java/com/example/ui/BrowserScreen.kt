@@ -77,8 +77,189 @@ fun BrowserScreen(
         AppThemeMode.SYSTEM -> systemInDark
     }
 
-    when (activeSheet) {
-        ActiveSheet.SETTINGS -> {
+    Box(modifier = modifier.fillMaxSize()) {
+        // Hardware back press handling for main browser
+        BackHandler(enabled = activeSheet == ActiveSheet.NONE) {
+            if (isFindInPageActive) {
+                viewModel.closeFindInPage()
+            } else if (activeTabState?.canGoBack == true) {
+                viewModel.goBack()
+            } else if (!isHome) {
+                viewModel.goHome()
+            }
+        }
+
+        Scaffold(
+            topBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp,
+                    shadowElevation = 1.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsPadding(WindowInsets.statusBars)
+                    ) {
+                        // Top URL Bar
+                        AddressBar(
+                            activeTab = activeTabState,
+                            currentProfile = currentProfile,
+                            isPrivateMode = isPrivateMode,
+                            tabCount = currentTabs.size,
+                            isBookmarked = isBookmarked,
+                            onNavigate = {
+                                focusManager.clearFocus(force = true)
+                                viewModel.navigateTo(it)
+                            },
+                            onReload = { viewModel.reload() },
+                            onStop = { viewModel.stopLoading() },
+                            onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
+                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                            onOpenMenu = { showMenuSheet = true }
+                        )
+
+                        if (isFindInPageActive) {
+                            FindInPageBar(
+                                query = findQuery,
+                                matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
+                                matchTotal = activeTabState?.searchMatchCount ?: 0,
+                                onQueryChange = { viewModel.setFindQuery(it) },
+                                onFindNext = { forward -> viewModel.findNext(forward) },
+                                onClose = { viewModel.closeFindInPage() }
+                            )
+                        }
+                    }
+                }
+            },
+            bottomBar = {
+                BrowserBottomBar(
+                    canGoBack = activeTabState?.canGoBack == true,
+                    canGoForward = activeTabState?.canGoForward == true,
+                    tabCount = currentTabs.size,
+                    onGoBack = { viewModel.goBack() },
+                    onGoForward = { viewModel.goForward() },
+                    onGoHome = { viewModel.goHome() },
+                    onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                    onOpenMenu = { showMenuSheet = true }
+                )
+            },
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            modifier = Modifier.fillMaxSize()
+        ) { innerPadding ->
+            val activeTabId = activeTabState?.id ?: ""
+            val openTabs = remember(currentTabs, activeTabState) {
+                val map = linkedMapOf<String, BrowserTab>()
+                currentTabs.forEach { map[it.id] = it }
+                activeTabState?.let { active ->
+                    if (active.id.isNotBlank() && !map.containsKey(active.id)) {
+                        map[active.id] = BrowserTab(
+                            id = active.id,
+                            profileId = active.profileId,
+                            url = active.url,
+                            title = active.title,
+                            isDesktopMode = active.isDesktopMode,
+                            isPrivate = active.isPrivate
+                        )
+                    }
+                }
+                map.values.toList()
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .background(MaterialTheme.colorScheme.background)
+            ) {
+                // Persistent WebViews for all open tabs to keep background playback and prevent reloads
+                for (tab in openTabs) {
+                    val isActive = (tab.id == activeTabId && !isHome)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                alpha = if (isActive) 1f else 0f
+                                translationX = if (isActive) 0f else 50000f
+                            }
+                    ) {
+                        key(tab.id) {
+                            WebViewContainer(
+                                tabId = tab.id,
+                                initialUrl = tab.url,
+                                isDesktopMode = tab.isDesktopMode,
+                                isAdBlockEnabled = isAdBlockEnabled,
+                                whitelistedDomains = whitelistedDomains,
+                                blockThirdPartyCookies = blockThirdPartyCookies,
+                                enableWebDarkMode = enableWebDarkMode,
+                                enableBackgroundPlay = enableBackgroundPlay,
+                                isDarkTheme = isDarkTheme,
+                                currentProfile = currentProfile,
+                                viewModel = viewModel,
+                                actions = viewModel.webViewActionEvent
+                            )
+                        }
+                    }
+                }
+
+                if (isHome) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .zIndex(10f)
+                            .background(MaterialTheme.colorScheme.background)
+                    ) {
+                        NewTabPage(
+                            currentProfile = currentProfile,
+                            isPrivateMode = isPrivateMode,
+                            searchEngine = searchEngine,
+                            bookmarks = bookmarks,
+                            shortcuts = quickShortcuts,
+                            newTabStyle = newTabStyle,
+                            onNavigate = { viewModel.navigateTo(it) },
+                            onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
+                            onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
+                            onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
+                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Full Screen Overlay Sheets (Keeps underlying WebViews alive and unpaused)
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.TABS,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
+            BackHandler(enabled = true) {
+                viewModel.dismissSheet()
+            }
+            TabsManagerScreen(
+                tabs = currentTabs,
+                activeTabId = activeTabState?.id ?: "",
+                currentProfile = currentProfile,
+                isPrivateMode = isPrivateMode,
+                onSelectTab = { viewModel.selectTab(it) },
+                onCloseTab = { viewModel.closeTab(it) },
+                onNewTab = { viewModel.createNewTab() },
+                onCloseAllTabs = { viewModel.closeAllTabs() },
+                onTogglePrivateMode = { viewModel.togglePrivateMode() },
+                onDismiss = { viewModel.dismissSheet() },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.SETTINGS,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
             BackHandler(enabled = true) {
                 viewModel.dismissSheet()
             }
@@ -105,10 +286,15 @@ fun BrowserScreen(
                 onDownloadProviderChange = { viewModel.setDownloadProvider(it) },
                 onOpenClearData = { showClearDataDialog = true },
                 onDismiss = { viewModel.dismissSheet() },
-                modifier = modifier
+                modifier = Modifier.fillMaxSize()
             )
         }
-        ActiveSheet.BOOKMARKS -> {
+
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.BOOKMARKS,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
             BackHandler(enabled = true) {
                 viewModel.dismissSheet()
             }
@@ -121,10 +307,15 @@ fun BrowserScreen(
                 },
                 onDeleteBookmark = { viewModel.deleteBookmark(it) },
                 onDismiss = { viewModel.dismissSheet() },
-                modifier = modifier
+                modifier = Modifier.fillMaxSize()
             )
         }
-        ActiveSheet.HISTORY -> {
+
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.HISTORY,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
             BackHandler(enabled = true) {
                 viewModel.dismissSheet()
             }
@@ -138,10 +329,15 @@ fun BrowserScreen(
                 onDeleteHistoryItem = { viewModel.deleteHistoryItem(it) },
                 onClearAllHistory = { viewModel.clearAllHistory() },
                 onDismiss = { viewModel.dismissSheet() },
-                modifier = modifier
+                modifier = Modifier.fillMaxSize()
             )
         }
-        ActiveSheet.DOWNLOADS -> {
+
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.DOWNLOADS,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
             BackHandler(enabled = true) {
                 viewModel.dismissSheet()
             }
@@ -150,202 +346,30 @@ fun BrowserScreen(
                 onOpenFile = { viewModel.openDownloadedFile(it) },
                 onDeleteDownload = { viewModel.deleteDownloadItem(it) },
                 onDismiss = { viewModel.dismissSheet() },
-                modifier = modifier
+                modifier = Modifier.fillMaxSize()
             )
         }
-        ActiveSheet.TABS -> {
-            BackHandler(enabled = true) {
-                viewModel.dismissSheet()
-            }
-            TabsManagerScreen(
-                tabs = currentTabs,
-                activeTabId = activeTabState?.id ?: "",
-                currentProfile = currentProfile,
-                isPrivateMode = isPrivateMode,
-                onSelectTab = { viewModel.selectTab(it) },
-                onCloseTab = { viewModel.closeTab(it) },
-                onNewTab = { viewModel.createNewTab() },
-                onCloseAllTabs = { viewModel.closeAllTabs() },
-                onTogglePrivateMode = { viewModel.togglePrivateMode() },
-                onDismiss = { viewModel.dismissSheet() },
-                modifier = modifier
+
+        // Bottom Dialogs
+        if (activeSheet == ActiveSheet.PROFILES) {
+            ProfileManagerDialog(
+                profiles = profiles,
+                currentProfileId = viewModel.currentProfileId.collectAsStateWithLifecycle().value,
+                onSelectProfile = { viewModel.switchProfile(it) },
+                onCreateProfile = { name, icon, color, preset -> viewModel.createNewProfile(name, icon, color, preset) },
+                onUpdateProfile = { viewModel.updateProfile(it) },
+                onDeleteProfile = { viewModel.deleteProfile(it) },
+                onDismiss = { viewModel.dismissSheet() }
             )
-        }
-        else -> {
-            // Hardware back press handling for main browser
-            BackHandler(enabled = true) {
-                if (isFindInPageActive) {
-                    viewModel.closeFindInPage()
-                } else if (activeTabState?.canGoBack == true) {
-                    viewModel.goBack()
-                } else if (!isHome) {
-                    viewModel.goHome()
-                }
-            }
-
-            Scaffold(
-                topBar = {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 5.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.statusBars)
-                        ) {
-                            // Top URL Bar
-                            AddressBar(
-                                activeTab = activeTabState,
-                                currentProfile = currentProfile,
-                                isPrivateMode = isPrivateMode,
-                                tabCount = currentTabs.size,
-                                isBookmarked = isBookmarked,
-                                onNavigate = {
-                                    focusManager.clearFocus(force = true)
-                                    viewModel.navigateTo(it)
-                                },
-                                onReload = { viewModel.reload() },
-                                onStop = { viewModel.stopLoading() },
-                                onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
-                                onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                                onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                                onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
-                                onOpenMenu = { showMenuSheet = true }
-                            )
-
-                            if (isFindInPageActive) {
-                                FindInPageBar(
-                                    query = findQuery,
-                                    matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
-                                    matchTotal = activeTabState?.searchMatchCount ?: 0,
-                                    onQueryChange = { viewModel.setFindQuery(it) },
-                                    onFindNext = { forward -> viewModel.findNext(forward) },
-                                    onClose = { viewModel.closeFindInPage() }
-                                )
-                            }
-                        }
-                    }
-                },
-                bottomBar = {
-                    BrowserBottomBar(
-                        canGoBack = activeTabState?.canGoBack == true,
-                        canGoForward = activeTabState?.canGoForward == true,
-                        tabCount = currentTabs.size,
-                        onGoBack = { viewModel.goBack() },
-                        onGoForward = { viewModel.goForward() },
-                        onGoHome = { viewModel.goHome() },
-                        onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                        onOpenMenu = { showMenuSheet = true }
-                    )
-                },
-                contentWindowInsets = WindowInsets(0, 0, 0, 0),
-                modifier = modifier.fillMaxSize()
-            ) { innerPadding ->
-                val activeTabId = activeTabState?.id ?: ""
-                val openTabs = remember(currentTabs, activeTabState) {
-                    val list = currentTabs.filter { it.url.isNotBlank() && it.url != "about:blank" }.toMutableList()
-                    activeTabState?.let { active ->
-                        if (active.url.isNotBlank() && active.url != "about:blank" && list.none { it.id == active.id }) {
-                            list.add(
-                                BrowserTab(
-                                    id = active.id,
-                                    profileId = active.profileId,
-                                    url = active.url,
-                                    title = active.title,
-                                    isDesktopMode = active.isDesktopMode,
-                                    isPrivate = active.isPrivate
-                                )
-                            )
-                        }
-                    }
-                    list
-                }
-
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .background(MaterialTheme.colorScheme.background)
-                ) {
-                    // Persistent WebViews for all open tabs to keep background playback and prevent reloads
-                    for (tab in openTabs) {
-                        val isActive = (tab.id == activeTabId && !isHome)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    alpha = if (isActive) 1f else 0f
-                                    translationX = if (isActive) 0f else 50000f
-                                }
-                        ) {
-                            key(tab.id) {
-                                WebViewContainer(
-                                    tabId = tab.id,
-                                    initialUrl = tab.url,
-                                    isDesktopMode = tab.isDesktopMode,
-                                    isAdBlockEnabled = isAdBlockEnabled,
-                                    whitelistedDomains = whitelistedDomains,
-                                    blockThirdPartyCookies = blockThirdPartyCookies,
-                                    enableWebDarkMode = enableWebDarkMode,
-                                    enableBackgroundPlay = enableBackgroundPlay,
-                                    isDarkTheme = isDarkTheme,
-                                    currentProfile = currentProfile,
-                                    viewModel = viewModel,
-                                    actions = viewModel.webViewActionEvent
-                                )
-                            }
-                        }
-                    }
-
-                    if (isHome) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(10f)
-                                .background(MaterialTheme.colorScheme.background)
-                        ) {
-                            NewTabPage(
-                                currentProfile = currentProfile,
-                                isPrivateMode = isPrivateMode,
-                                searchEngine = searchEngine,
-                                bookmarks = bookmarks,
-                                shortcuts = quickShortcuts,
-                                newTabStyle = newTabStyle,
-                                onNavigate = { viewModel.navigateTo(it) },
-                                onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
-                                onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
-                                onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
-                                onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                                onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) }
-                            )
-                        }
-                    }
-                }
-            }
-
-            // Bottom Sheets
-            if (activeSheet == ActiveSheet.PROFILES) {
-                ProfileManagerDialog(
-                    profiles = profiles,
-                    currentProfileId = viewModel.currentProfileId.collectAsStateWithLifecycle().value,
-                    onSelectProfile = { viewModel.switchProfile(it) },
-                    onCreateProfile = { name, icon, color, preset -> viewModel.createNewProfile(name, icon, color, preset) },
-                    onUpdateProfile = { viewModel.updateProfile(it) },
-                    onDeleteProfile = { viewModel.deleteProfile(it) },
-                    onDismiss = { viewModel.dismissSheet() }
-                )
-            } else if (activeSheet == ActiveSheet.PRIVACY_SHIELD) {
-                PrivacyShieldDialog(
-                    activeTab = activeTabState,
-                    isGlobalBlockerEnabled = isAdBlockEnabled,
-                    isSiteWhitelisted = isSiteWhitelisted,
-                    onToggleGlobalBlocker = { viewModel.isAdBlockEnabled.value = it },
-                    onToggleSiteException = { viewModel.toggleCurrentSiteAdBlockException() },
-                    onDismiss = { viewModel.dismissSheet() }
-                )
-            }
+        } else if (activeSheet == ActiveSheet.PRIVACY_SHIELD) {
+            PrivacyShieldDialog(
+                activeTab = activeTabState,
+                isGlobalBlockerEnabled = isAdBlockEnabled,
+                isSiteWhitelisted = isSiteWhitelisted,
+                onToggleGlobalBlocker = { viewModel.isAdBlockEnabled.value = it },
+                onToggleSiteException = { viewModel.toggleCurrentSiteAdBlockException() },
+                onDismiss = { viewModel.dismissSheet() }
+            )
         }
     }
 

@@ -87,9 +87,7 @@ fun AddressBar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val currentView = LocalView.current
 
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 5.dp,
+    Box(
         modifier = modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {

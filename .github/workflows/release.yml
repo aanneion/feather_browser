@@ -60,11 +60,14 @@ jobs:
           distribution: 'microsoft'
           cache: gradle
 
-      - name: Setup Android Keystore for Release
+      - name: Setup Android Release Keystore
         run: |
+          if [ ! -f release.keystore ]; then
+            echo "Generating consistent release.keystore for signing..."
+            keytool -genkeypair -v -keystore release.keystore -alias feather_release_key -keyalg RSA -keysize 2048 -validity 10000 -storepass feather123 -keypass feather123 -dname "CN=Feather Browser, OU=Mobile Applications, O=Feather Privacy Browser, L=San Francisco, ST=California, C=US"
+          fi
           if [ ! -f debug.keystore ]; then
-            echo "Generating build debug.keystore for signing..."
-            keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            cp release.keystore debug.keystore || true
           fi
 
       - name: Grant execute permission for gradlew
