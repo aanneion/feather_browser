@@ -164,6 +164,24 @@ class BrowserRepository(private val database: AppDatabase) {
         database.tabDao().deleteAllPrivateTabs()
     }
 
+    suspend fun resetTabsToSingleTab(profileId: String, isPrivate: Boolean): BrowserTab = withContext(Dispatchers.IO) {
+        if (isPrivate) {
+            database.tabDao().deleteAllPrivateTabs()
+        } else {
+            database.tabDao().deleteNormalTabsForProfile(profileId)
+        }
+        val newTabId = java.util.UUID.randomUUID().toString()
+        val singleTab = BrowserTab(
+            id = newTabId,
+            profileId = profileId,
+            url = "",
+            title = "New Tab",
+            isPrivate = isPrivate
+        )
+        database.tabDao().insertTab(singleTab)
+        singleTab
+    }
+
     // Bookmarks
     suspend fun addBookmark(profileId: String, title: String, url: String) = withContext(Dispatchers.IO) {
         val existing = database.bookmarkDao().getBookmarkByUrl(profileId, url)

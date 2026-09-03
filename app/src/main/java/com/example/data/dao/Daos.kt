@@ -42,6 +42,9 @@ interface TabDao {
     @Query("DELETE FROM browser_tabs WHERE profileId = :profileId")
     suspend fun deleteTabsForProfile(profileId: String)
 
+    @Query("DELETE FROM browser_tabs WHERE profileId = :profileId AND isPrivate = 0")
+    suspend fun deleteNormalTabsForProfile(profileId: String)
+
     @Query("DELETE FROM browser_tabs WHERE isPrivate = 1")
     suspend fun deleteAllPrivateTabs()
 }

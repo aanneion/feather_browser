@@ -37,35 +37,15 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
 
-    override fun dispatchWindowVisibilityChanged(visibility: Int) {
-        try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.dispatchWindowVisibilityChanged(effectiveVisibility)
-        } catch (e: Exception) { }
-    }
-
     override fun onWindowVisibilityChanged(visibility: Int) {
         try {
-            // When allowBackgroundPlayback is enabled, report View.VISIBLE to prevent Chromium from pausing HTML5 audio/video engines
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            // When allowBackgroundPlayback is enabled and view is attached, report View.VISIBLE
+            // to keep HTML5 audio/media engine playing in background without breaking detach lifecycle
+            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
             super.onWindowVisibilityChanged(effectiveVisibility)
         } catch (e: Exception) {
             // Guard against Chromium native compositor edge cases during surface attachment
         }
-    }
-
-    override fun onVisibilityChanged(changedView: View, visibility: Int) {
-        try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.onVisibilityChanged(changedView, effectiveVisibility)
-        } catch (e: Exception) { }
-    }
-
-    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
-            super.onWindowFocusChanged(effectiveFocus)
-        } catch (e: Exception) { }
     }
 
     override fun onPause() {
@@ -260,8 +240,12 @@ fun WebViewContainer(
             try {
                 MediaSessionManager.unregisterWebView(tabId)
                 webViewRef?.apply {
+                    if (this is PersistentWebView) {
+                        this.allowBackgroundPlayback = false
+                    }
                     stopLoading()
-                    loadUrl("about:blank")
+                    webViewClient = WebViewClient()
+                    webChromeClient = WebChromeClient()
                     clearHistory()
                     (parent as? ViewGroup)?.removeView(this)
                     destroy()
@@ -275,16 +259,22 @@ fun WebViewContainer(
         Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             AndroidView(
                 factory = { ctx ->
-                    PersistentWebView(ctx).apply {
+                    val uiMode = if (effectiveDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
+                    val config = Configuration(ctx.resources.configuration).apply {
+                        this.uiMode = (this.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or uiMode
+                    }
+                    val themedContext = ctx.createConfigurationContext(config)
+                    PersistentWebView(themedContext).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
-                        addJavascriptInterface(FeatherMediaBridge(ctx.applicationContext, tabId), "FeatherMediaBridge")
+                        addJavascriptInterface(FeatherMediaBridge(themedContext.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
 
-                        // Eliminate black flashing on init
-                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        // Set opaque background matching current theme to avoid transparent surface compositor overhead
+                        val initialBgColor = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
+                        setBackgroundColor(initialBgColor)
 
                         // In virtualized environments or fallback crashes, ensure rendering stability
                         if (renderCrashCount > 0) {
@@ -346,15 +336,22 @@ fun WebViewContainer(
                         }
 
                         // Dark Mode for Web Content (aligned with active browser theme & force-dark setting)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            settings.isAlgorithmicDarkeningAllowed = effectiveDark
-                        } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
-                            WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, effectiveDark)
-                        } else if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                        if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
                             WebSettingsCompat.setForceDark(
                                 settings,
                                 if (effectiveDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
                             )
+                        }
+                        if (effectiveDark && WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                            WebSettingsCompat.setForceDarkStrategy(
+                                settings,
+                                WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
+                            )
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            settings.isAlgorithmicDarkeningAllowed = effectiveDark
+                        } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                            WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, effectiveDark)
                         }
 
                         // Find in page listener
@@ -411,6 +408,12 @@ fun WebViewContainer(
                                         view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
                                     } catch (e: Exception) { }
                                 }
+
+                                // Enforce CSS color-scheme matching browser theme mode
+                                val colorScheme = if (effectiveDark) "dark" else "light"
+                                try {
+                                    view?.evaluateJavascript("try { document.documentElement.style.colorScheme = '$colorScheme'; } catch(e){}", null)
+                                } catch (e: Exception) { }
                             }
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
@@ -630,6 +633,28 @@ fun WebViewContainer(
                     if (webView is PersistentWebView) {
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
+
+                    // Keep web dark mode & theme styling synchronized dynamically
+                    val targetBg = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
+                    webView.setBackgroundColor(targetBg)
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
+                        WebSettingsCompat.setForceDark(
+                            webView.settings,
+                            if (effectiveDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
+                        )
+                    }
+                    if (effectiveDark && WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                        WebSettingsCompat.setForceDarkStrategy(
+                            webView.settings,
+                            WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
+                        )
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        webView.settings.isAlgorithmicDarkeningAllowed = effectiveDark
+                    } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
+                        WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, effectiveDark)
+                    }
+
                     if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
                         val cur = webView.url ?: ""
                         if (cur.isEmpty() || cur == "about:blank") {

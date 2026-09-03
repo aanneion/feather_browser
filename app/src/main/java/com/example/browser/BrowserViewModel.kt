@@ -292,7 +292,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                         val currentTabId = _activeTabId.value
                         val existingTab = tabs.find { it.id == currentTabId }
                         if (existingTab == null) {
-                            selectTab(tabs.first().id)
+                            selectTab(tabs.first().id, autoDismiss = false)
                         } else {
                             val curState = _activeTabState.value
                             if (curState == null || curState.id != existingTab.id) {
@@ -387,7 +387,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun createNewTab(url: String = "", profileId: String = if (_isPrivateMode.value) "private_session" else _currentProfileId.value, isPrivate: Boolean = _isPrivateMode.value) {
+    fun createNewTab(
+        url: String = "",
+        profileId: String = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
+        isPrivate: Boolean = _isPrivateMode.value,
+        autoDismiss: Boolean = true
+    ) {
         viewModelScope.launch {
             val tabId = UUID.randomUUID().toString()
             val newTab = BrowserTab(
@@ -398,12 +403,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 isPrivate = isPrivate
             )
             repository.saveTab(newTab)
-            selectTab(tabId)
-            dismissSheet()
+            selectTab(tabId, autoDismiss = autoDismiss)
         }
     }
 
-    fun selectTab(tabId: String) {
+    fun selectTab(tabId: String, autoDismiss: Boolean = true) {
         _activeTabId.value = tabId
         val tab = currentTabs.value.find { it.id == tabId }
         val currentBlocked = ContentBlocker.getBlockCountForTab(tabId)
@@ -416,7 +420,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             isDesktopMode = tab?.isDesktopMode ?: false,
             blockedCount = currentBlocked
         )
-        dismissSheet()
+        if (autoDismiss) {
+            dismissSheet()
+        }
     }
 
     fun closeTab(tabId: String) {
@@ -431,10 +437,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val remaining = currentTabs.value.filter { it.id != tabId }
             if (remaining.isNotEmpty()) {
                 if (_activeTabId.value == tabId) {
-                    selectTab(remaining.first().id)
+                    selectTab(remaining.first().id, autoDismiss = false)
                 }
             } else {
-                createNewTab(isPrivate = _isPrivateMode.value)
+                createNewTab(isPrivate = _isPrivateMode.value, autoDismiss = false)
             }
         }
     }
@@ -444,16 +450,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             try {
                 com.example.media.MediaSessionManager.stopPlayback(context)
             } catch (e: Throwable) { }
+            val profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value
+            val singleTab = repository.resetTabsToSingleTab(profileId, _isPrivateMode.value)
             if (_isPrivateMode.value) {
-                repository.clearPrivateTabs()
                 privacyManager.cleanPrivateSessionData()
-            } else {
-                repository.getTabsForProfile(_currentProfileId.value).firstOrNull()?.forEach {
-                    repository.deleteTab(it.id)
-                }
             }
-            createNewTab(isPrivate = _isPrivateMode.value)
-            dismissSheet()
+            _activeTabId.value = singleTab.id
+            _activeTabState.value = ActiveTabState(
+                id = singleTab.id,
+                profileId = singleTab.profileId,
+                url = "",
+                title = "New Tab",
+                isPrivate = singleTab.isPrivate,
+                isDesktopMode = false,
+                blockedCount = 0
+            )
         }
     }
 
