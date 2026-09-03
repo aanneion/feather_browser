@@ -37,6 +37,13 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
 
+    override fun dispatchWindowVisibilityChanged(visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            super.dispatchWindowVisibilityChanged(effectiveVisibility)
+        } catch (e: Exception) { }
+    }
+
     override fun onWindowVisibilityChanged(visibility: Int) {
         try {
             // When allowBackgroundPlayback is enabled, report View.VISIBLE to prevent Chromium from pausing HTML5 audio/video engines
@@ -45,6 +52,20 @@ class PersistentWebView(context: Context) : WebView(context) {
         } catch (e: Exception) {
             // Guard against Chromium native compositor edge cases during surface attachment
         }
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            super.onVisibilityChanged(changedView, effectiveVisibility)
+        } catch (e: Exception) { }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
+            super.onWindowFocusChanged(effectiveFocus)
+        } catch (e: Exception) { }
     }
 
     override fun onPause() {

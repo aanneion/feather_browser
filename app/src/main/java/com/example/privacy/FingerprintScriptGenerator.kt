@@ -152,7 +152,20 @@ object FingerprintScriptGenerator {
                     window.IntersectionObserver.prototype = OrigIO.prototype;
                 }
 
-                // 5. Media Session API hooking for notification media player
+                // 5. Track genuine user interactions so we differentiate user pauses from backgrounding pauses
+                window.__feather_explicit_pause = false;
+                let lastUserTouchTime = 0;
+                const recordUserTouch = function(e) {
+                    if (e && e.isTrusted) {
+                        lastUserTouchTime = Date.now();
+                    }
+                };
+                ['pointerdown', 'mousedown', 'touchstart', 'click', 'keydown'].forEach(function(evt) {
+                    window.addEventListener(evt, recordUserTouch, true);
+                    document.addEventListener(evt, recordUserTouch, true);
+                });
+
+                // 6. Media Session API hooking for notification media player
                 window.__feather_actions = window.__feather_actions || {};
 
                 function getMediaThumbnail() {
@@ -246,11 +259,13 @@ object FingerprintScriptGenerator {
                     }
                 } catch(e) {}
 
-                // 6. Direct media element tracking & action triggers
+                // 7. Direct media element tracking & action triggers
                 window.__feather_media_play = function() {
+                    window.__feather_explicit_pause = false;
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['play'] === 'function') {
                             window.__feather_actions['play']();
+                            notifyMediaBridge(true);
                             return;
                         }
                     } catch(e) {}
@@ -258,6 +273,7 @@ object FingerprintScriptGenerator {
                         const moviePlayer = document.getElementById('movie_player');
                         if (moviePlayer && typeof moviePlayer.playVideo === 'function') {
                             moviePlayer.playVideo();
+                            notifyMediaBridge(true);
                             return;
                         }
                     } catch(e) {}
@@ -267,6 +283,7 @@ object FingerprintScriptGenerator {
                             mediaEls.forEach(function(m) {
                                 m.play().catch(function() {});
                             });
+                            notifyMediaBridge(true);
                         }
                     } catch(e) {}
                     try {
@@ -276,9 +293,11 @@ object FingerprintScriptGenerator {
                 };
 
                 window.__feather_media_pause = function() {
+                    window.__feather_explicit_pause = true;
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['pause'] === 'function') {
                             window.__feather_actions['pause']();
+                            notifyMediaBridge(false);
                             return;
                         }
                     } catch(e) {}
@@ -286,6 +305,7 @@ object FingerprintScriptGenerator {
                         const moviePlayer = document.getElementById('movie_player');
                         if (moviePlayer && typeof moviePlayer.pauseVideo === 'function') {
                             moviePlayer.pauseVideo();
+                            notifyMediaBridge(false);
                             return;
                         }
                     } catch(e) {}
@@ -295,6 +315,7 @@ object FingerprintScriptGenerator {
                             mediaEls.forEach(function(m) {
                                 m.pause();
                             });
+                            notifyMediaBridge(false);
                         }
                     } catch(e) {}
                     try {
@@ -334,24 +355,33 @@ object FingerprintScriptGenerator {
                     }
                 };
 
-                // Hook HTMLMediaElement prototype play and pause
+                // 8. Hook HTMLMediaElement prototype play and pause with background auto-pause defense
                 try {
                     const origPlay = HTMLMediaElement.prototype.play;
                     HTMLMediaElement.prototype.play = function() {
+                        window.__feather_explicit_pause = false;
                         notifyMediaBridge(true);
                         return origPlay.apply(this, arguments);
                     };
 
                     const origPause = HTMLMediaElement.prototype.pause;
                     HTMLMediaElement.prototype.pause = function() {
+                        // Check if the pause call was triggered by genuine user action or explicitly by media session bridge
+                        const isExplicitUserPause = window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 800);
+                        if (!isExplicitUserPause) {
+                            // Suppress unwanted auto-pause triggered by YouTube visibility listeners or background state!
+                            return;
+                        }
                         notifyMediaBridge(false);
                         return origPause.apply(this, arguments);
                     };
                 } catch(e) {}
 
-                // Periodic monitor for HTML media elements
+                // 9. Periodic monitor & watchdog for HTML media elements
                 let lastReportedState = null;
                 let lastReportedTitle = '';
+                let wasActivePlayback = false;
+
                 const monitorMedia = function() {
                     try {
                         const els = document.querySelectorAll('video, audio');
@@ -364,11 +394,14 @@ object FingerprintScriptGenerator {
                             el.__feather_monitored = true;
 
                             el.addEventListener('play', function() {
+                                window.__feather_explicit_pause = false;
                                 notifyMediaBridge(true);
                             });
 
                             el.addEventListener('pause', function() {
-                                notifyMediaBridge(false);
+                                if (window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 800)) {
+                                    notifyMediaBridge(false);
+                                }
                             });
 
                             el.addEventListener('ended', function() {
@@ -378,6 +411,17 @@ object FingerprintScriptGenerator {
                             });
                         });
 
+                        if (anyPlaying) {
+                            wasActivePlayback = true;
+                        } else if (wasActivePlayback && !window.__feather_explicit_pause && (Date.now() - lastUserTouchTime > 1500)) {
+                            // Video unexpectedly paused while in the background without user touch!
+                            // Auto-resume background playback
+                            const video = document.querySelector('video');
+                            if (video && video.paused && !video.ended) {
+                                video.play().catch(function() {});
+                            }
+                        }
+
                         const currentTitle = getMediaTitle();
                         if (anyPlaying !== lastReportedState || (anyPlaying && currentTitle !== lastReportedTitle)) {
                             lastReportedState = anyPlaying;
@@ -386,7 +430,7 @@ object FingerprintScriptGenerator {
                         }
                     } catch(e) {}
                 };
-                setInterval(monitorMedia, 1500);
+                setInterval(monitorMedia, 800);
                 monitorMedia();
             } catch(e) {}
         })();

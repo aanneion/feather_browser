@@ -93,13 +93,18 @@ object ContentBlocker {
     fun shouldBlock(uri: Uri, isGlobalBlockerEnabled: Boolean, isSiteWhitelisted: Boolean): Boolean {
         if (!isGlobalBlockerEnabled || isSiteWhitelisted) return false
 
+        val host = uri.host?.lowercase() ?: return false
+
+        // NEVER block googlevideo.com media streams
+        if (host.contains("googlevideo.com")) {
+            return false
+        }
+
         // Check specialized YouTube ad endpoints
         if (YouTubeAdBlocker.isYouTubeAdRequest(uri)) {
             _totalBlockedCount.value += 1
             return true
         }
-
-        val host = uri.host?.lowercase() ?: return false
         val pathAndQuery = (uri.path ?: "") + (uri.query?.let { "?$it" } ?: "")
 
         // Check host suffix match (e.g. ad.doubleclick.net endsWith doubleclick.net)

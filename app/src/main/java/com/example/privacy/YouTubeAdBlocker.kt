@@ -4,7 +4,8 @@ import android.net.Uri
 
 /**
  * Specialized YouTube Ad Blocker that strips YouTube video prerolls, midrolls,
- * banner promos, promoted video items, and dynamically fast-forwards/skips unskippable ads.
+ * banner promos, promoted video items, and dynamically fast-forwards/skips unskippable ads
+ * using techniques aligned with Brave Browser & uBlock Origin.
  */
 object YouTubeAdBlocker {
 
@@ -16,19 +17,24 @@ object YouTubeAdBlocker {
 
     fun isYouTubeAdRequest(uri: Uri): Boolean {
         val host = uri.host?.lowercase() ?: return false
-        val pathAndQuery = ((uri.path ?: "") + (uri.query?.let { "?$it" } ?: "")).lowercase()
 
-        // Match Google / YouTube ad and tracking endpoints
-        if (host.contains("youtube.com") || host.contains("googlevideo.com")) {
-            if (pathAndQuery.contains("/pagead/") ||
-                pathAndQuery.contains("/api/stats/ads") ||
-                pathAndQuery.contains("/youtubei/v1/player/ad_break") ||
-                pathAndQuery.contains("/get_midroll_info") ||
-                pathAndQuery.contains("/ptracking") ||
-                pathAndQuery.contains("ctier=a") ||
-                pathAndQuery.contains("&adformat=") ||
-                pathAndQuery.contains("ad_type=") ||
-                pathAndQuery.contains("ad_break")) {
+        // CRITICAL: NEVER block googlevideo.com! It carries the actual video stream media chunks.
+        // Blocking googlevideo.com breaks playback and triggers infinite buffering or playback errors.
+        if (host.contains("googlevideo.com")) {
+            return false
+        }
+
+        val path = uri.path?.lowercase() ?: ""
+        // Never block core watch, embed, or player javascript endpoints
+        if (path.contains("/watch") || path.contains("/embed") || path.endsWith(".js") || path.contains("/s/player/")) {
+            return false
+        }
+
+        // Match Google / YouTube dedicated ad and tracking endpoints
+        if (host.contains("youtube.com")) {
+            if (path.contains("/pagead/") ||
+                path.contains("/api/stats/ads") ||
+                path.contains("/ptracking")) {
                 return true
             }
         }
@@ -36,6 +42,7 @@ object YouTubeAdBlocker {
         if (host == "googleads.g.doubleclick.net" ||
             host == "static.doubleclick.net" ||
             host == "ad.youtube.com" ||
+            host == "ads.youtube.com" ||
             host.endsWith(".doubleclick.net")) {
             return true
         }
@@ -44,14 +51,19 @@ object YouTubeAdBlocker {
     }
 
     /**
-     * JavaScript payload injected into YouTube web pages to remove ad slots from JSON
-     * responses, hide cosmetic ad banners, and instantly skip/fast-forward video ads.
+     * JavaScript payload injected into YouTube web pages:
+     * 1. CSS styling to hide all ad modules, overlays, badges, banners, and anti-adblock modals.
+     * 2. JSON Response interception (window.fetch and XMLHttpRequest) to prune adPlacements, adSlots,
+     *    playerAds from YouTube's internal API responses (/youtubei/v1/player and /youtubei/v1/next).
+     * 3. Global JSON.parse interception and window.ytInitialPlayerResponse proxying.
+     * 4. High-frequency MutationObserver + interval ad-skipper: fast-forwards ad video duration,
+     *    mutes ads, triggers skip buttons, and closes anti-adblock modals.
      */
     fun getYouTubeAdBlockScript(): String {
         return """
         (function() {
-            if (window.__feather_yt_adblock_installed) return;
-            window.__feather_yt_adblock_installed = true;
+            if (window.__feather_yt_adblock_active) return;
+            window.__feather_yt_adblock_active = true;
 
             // 1. Hide ad DOM containers with CSS
             const injectAdStyles = function() {
@@ -67,6 +79,8 @@ object YouTubeAdBlocker {
                     .ytp-ad-progress-list,
                     .ytp-ad-preview-container,
                     .ytp-ad-image-overlay,
+                    .ytp-ad-player-overlay,
+                    .ytp-ad-action-interstitial,
                     ytm-promoted-sparkles-web-renderer,
                     ytd-promoted-sparkles-web-renderer,
                     ytd-promoted-video-renderer,
@@ -80,7 +94,10 @@ object YouTubeAdBlocker {
                     #player-ads,
                     #masthead-ad,
                     .ad-container,
-                    .ad-showing .ytp-ad-overlay-container {
+                    .ad-showing .ytp-ad-overlay-container,
+                    ytd-enforcement-message-view-model,
+                    tp-yt-paper-dialog[role="dialog"]:has(ytd-enforcement-message-view-model),
+                    tp-yt-iron-overlay-backdrop {
                         display: none !important;
                         visibility: hidden !important;
                         opacity: 0 !important;
@@ -96,42 +113,95 @@ object YouTubeAdBlocker {
                 document.addEventListener('DOMContentLoaded', injectAdStyles);
             }
 
-            // 2. Intercept JSON.parse to remove ad placements and slots from YouTube player config
+            // 2. Helper to clean ad data structures from YouTube player JSON responses
+            const pruneAdData = function(obj) {
+                if (!obj || typeof obj !== 'object') return obj;
+                try {
+                    if (Array.isArray(obj.adPlacements)) obj.adPlacements = [];
+                    if (Array.isArray(obj.adSlots)) obj.adSlots = [];
+                    if (obj.playerAds) delete obj.playerAds;
+                    if (obj.adBreakHeartbeatParams) delete obj.adBreakHeartbeatParams;
+                    if (obj.adBreakService) delete obj.adBreakService;
+                } catch(e) {}
+                return obj;
+            };
+
+            // 3. Intercept JSON.parse
             try {
                 const origJSONParse = JSON.parse;
                 JSON.parse = function() {
                     const data = origJSONParse.apply(this, arguments);
-                    try {
-                        if (data && typeof data === 'object') {
-                            if (Array.isArray(data.adPlacements)) data.adPlacements = [];
-                            if (Array.isArray(data.adSlots)) data.adSlots = [];
-                            if (data.playerAds) delete data.playerAds;
-                            if (data.adBreakHeartbeatParams) delete data.adBreakHeartbeatParams;
-                        }
-                    } catch(e) {}
-                    return data;
+                    return pruneAdData(data);
                 };
             } catch(e) {}
 
-            // Clean ytInitialPlayerResponse if already defined
-            const cleanPlayerResponse = function() {
-                try {
-                    if (window.ytInitialPlayerResponse && typeof window.ytInitialPlayerResponse === 'object') {
-                        if (Array.isArray(window.ytInitialPlayerResponse.adPlacements)) {
-                            window.ytInitialPlayerResponse.adPlacements = [];
+            // 4. Intercept window.fetch for /youtubei/v1/player and /youtubei/v1/next
+            try {
+                const origFetch = window.fetch;
+                window.fetch = async function() {
+                    const response = await origFetch.apply(this, arguments);
+                    try {
+                        const url = arguments[0];
+                        const urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : '');
+                        if (urlStr.includes('/youtubei/v1/player') || urlStr.includes('/youtubei/v1/next')) {
+                            const clone = response.clone();
+                            const json = await clone.json();
+                            const cleaned = pruneAdData(json);
+                            return new Response(JSON.stringify(cleaned), {
+                                status: response.status,
+                                statusText: response.statusText,
+                                headers: response.headers
+                            });
                         }
-                        if (Array.isArray(window.ytInitialPlayerResponse.adSlots)) {
-                            window.ytInitialPlayerResponse.adSlots = [];
-                        }
-                        if (window.ytInitialPlayerResponse.playerAds) {
-                            delete window.ytInitialPlayerResponse.playerAds;
-                        }
-                    }
-                } catch(e) {}
-            };
-            cleanPlayerResponse();
+                    } catch(e) {}
+                    return response;
+                };
+            } catch(e) {}
 
-            // 3. Fast video ad skipper and auto-fast-forward
+            // 5. Intercept XMLHttpRequest for YouTube API responses
+            try {
+                const origOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    this.__feather_url = url;
+                    return origOpen.apply(this, arguments);
+                };
+                const origResponseTextDesc = Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, 'responseText');
+                if (origResponseTextDesc && origResponseTextDesc.get) {
+                    Object.defineProperty(XMLHttpRequest.prototype, 'responseText', {
+                        get: function() {
+                            const origText = origResponseTextDesc.get.call(this);
+                            if (this.__feather_url && typeof this.__feather_url === 'string' &&
+                               (this.__feather_url.includes('/youtubei/v1/player') || this.__feather_url.includes('/youtubei/v1/next'))) {
+                                try {
+                                    const parsed = JSON.parse(origText);
+                                    return JSON.stringify(pruneAdData(parsed));
+                                } catch(e) {}
+                            }
+                            return origText;
+                        },
+                        configurable: true
+                    });
+                }
+            } catch(e) {}
+
+            // 6. Proxy ytInitialPlayerResponse
+            let internalPlayerResponse = window.ytInitialPlayerResponse;
+            try {
+                Object.defineProperty(window, 'ytInitialPlayerResponse', {
+                    get: function() {
+                        return internalPlayerResponse;
+                    },
+                    set: function(val) {
+                        internalPlayerResponse = pruneAdData(val);
+                    },
+                    configurable: true
+                });
+                if (internalPlayerResponse) {
+                    pruneAdData(internalPlayerResponse);
+                }
+            } catch(e) {}
+
+            // 7. Fast video ad skipper & auto fast-forward engine
             const skipSelectors = [
                 '.ytp-ad-skip-button',
                 '.ytp-ad-skip-button-modern',
@@ -141,43 +211,69 @@ object YouTubeAdBlocker {
                 '.ytm-ad-skip-button',
                 '[class*="skip-button"]',
                 '.ytp-ad-preview-container',
-                '.ytp-ad-overlay-close-button'
+                '.ytp-ad-overlay-close-button',
+                '.ytp-ad-skip-button-container'
             ];
 
             const handleVideoAds = function() {
                 try {
-                    const player = document.querySelector('.html5-video-player');
-                    if (!player) return;
+                    // Check for anti-adblock modal and dismiss it
+                    const enforcementModal = document.querySelector('ytd-enforcement-message-view-model, tp-yt-paper-dialog[role="dialog"]');
+                    if (enforcementModal) {
+                        const hasAdblockText = (enforcementModal.textContent || '').includes('Ad blockers');
+                        if (hasAdblockText) {
+                            enforcementModal.remove();
+                            const backdrops = document.querySelectorAll('tp-yt-iron-overlay-backdrop');
+                            backdrops.forEach(b => b.remove());
+                            const video = document.querySelector('video');
+                            if (video && video.paused) {
+                                video.play().catch(function() {});
+                            }
+                        }
+                    }
 
-                    const isAdShowing = player.classList.contains('ad-showing') || 
-                                        player.classList.contains('ad-interrupting');
+                    const player = document.querySelector('.html5-video-player');
+                    const isAdShowing = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) ||
+                                        document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay');
 
                     if (isAdShowing) {
-                        // Check for click-to-skip button first
+                        // 1. Immediately click skip buttons
                         for (let i = 0; i < skipSelectors.length; i++) {
                             const btn = document.querySelector(skipSelectors[i]);
                             if (btn) {
                                 btn.click();
-                                return;
+                                break;
                             }
                         }
 
+                        // 2. Mute, speed up, and fast-forward ad
                         const video = document.querySelector('video.html5-main-video') || document.querySelector('video');
                         if (video) {
                             video.muted = true;
                             video.playbackRate = 16.0;
                             if (isFinite(video.duration) && video.duration > 0) {
-                                video.currentTime = video.duration + 0.1;
+                                video.currentTime = video.duration + 0.5;
+                            } else {
+                                video.currentTime = 999999;
                             }
-                            const skipSlot = document.querySelector('.ytp-ad-skip-button-container, .ytp-ad-player-overlay-skip-or-preview');
-                            if (skipSlot) skipSlot.click();
                         }
                     }
                 } catch(e) {}
             };
 
-            setInterval(handleVideoAds, 500);
+            // High frequency interval (100ms) + MutationObserver for instant response
+            setInterval(handleVideoAds, 100);
             document.addEventListener('timeupdate', handleVideoAds, true);
+
+            try {
+                const observer = new MutationObserver(function() {
+                    handleVideoAds();
+                });
+                const targetNode = document.body || document.documentElement;
+                if (targetNode) {
+                    observer.observe(targetNode, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+                }
+            } catch(e) {}
         })();
         """.trimIndent()
     }

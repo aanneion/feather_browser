@@ -43,6 +43,23 @@ class ContentBlockerUnitTest {
     }
 
     @Test
+    fun youtubeStream_neverBlocked() {
+        val videoStreamUri = Uri.parse("https://rr1---sn-4g5edn6e.googlevideo.com/videoplayback?expire=1700000000&ei=test&ip=0.0.0.0&id=o-test&itag=18")
+        assertFalse(com.example.privacy.YouTubeAdBlocker.isYouTubeAdRequest(videoStreamUri))
+        assertFalse(ContentBlocker.shouldBlock(videoStreamUri, isGlobalBlockerEnabled = true, isSiteWhitelisted = false))
+    }
+
+    @Test
+    fun youtubeAds_blockedProperly() {
+        val adUri = Uri.parse("https://www.youtube.com/pagead/parallel_ad_stream")
+        assertTrue(com.example.privacy.YouTubeAdBlocker.isYouTubeAdRequest(adUri))
+        assertTrue(ContentBlocker.shouldBlock(adUri, isGlobalBlockerEnabled = true, isSiteWhitelisted = false))
+
+        val doubleClickUri = Uri.parse("https://googleads.g.doubleclick.net/pagead/ads")
+        assertTrue(com.example.privacy.YouTubeAdBlocker.isYouTubeAdRequest(doubleClickUri))
+    }
+
+    @Test
     fun browserPreferences_persistsNewTabStyleAcrossRestarts() {
         val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val prefs1 = com.example.data.BrowserPreferences(context)
