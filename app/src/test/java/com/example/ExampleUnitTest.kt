@@ -41,4 +41,15 @@ class ContentBlockerUnitTest {
         val adUri = Uri.parse("https://googleads.g.doubleclick.net/pagead/ads")
         assertFalse(ContentBlocker.shouldBlock(adUri, isGlobalBlockerEnabled = false, isSiteWhitelisted = false))
     }
+
+    @Test
+    fun browserPreferences_persistsNewTabStyleAcrossRestarts() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val prefs1 = com.example.data.BrowserPreferences(context)
+        prefs1.setNewTabStyle(com.example.browser.NewTabStyle.MINIMALIST)
+
+        // Simulate app restart / new instance
+        val prefs2 = com.example.data.BrowserPreferences(context)
+        assertEquals(com.example.browser.NewTabStyle.MINIMALIST, prefs2.getNewTabStyle())
+    }
 }

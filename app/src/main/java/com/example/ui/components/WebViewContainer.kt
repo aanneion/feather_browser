@@ -24,6 +24,7 @@ import com.example.browser.WebViewAction
 import com.example.data.model.BrowserProfile
 import com.example.privacy.ContentBlocker
 import com.example.privacy.FingerprintScriptGenerator
+import com.example.privacy.YouTubeAdBlocker
 import com.example.media.MediaControlAction
 import com.example.media.MediaSessionManager
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,18 +38,18 @@ class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
 
     override fun onWindowVisibilityChanged(visibility: Int) {
-        if (allowBackgroundPlayback) {
-            super.onWindowVisibilityChanged(View.VISIBLE)
-        } else {
-            super.onWindowVisibilityChanged(visibility)
+        try {
+            // When allowBackgroundPlayback is enabled, report View.VISIBLE to prevent Chromium from pausing HTML5 audio/video engines
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            super.onWindowVisibilityChanged(effectiveVisibility)
+        } catch (e: Exception) {
+            // Guard against Chromium native compositor edge cases during surface attachment
         }
     }
 
-    override fun onVisibilityChanged(changedView: View, visibility: Int) {
-        if (allowBackgroundPlayback) {
-            super.onVisibilityChanged(changedView, View.VISIBLE)
-        } else {
-            super.onVisibilityChanged(changedView, visibility)
+    override fun onPause() {
+        if (!allowBackgroundPlayback) {
+            super.onPause()
         }
     }
 }
@@ -59,28 +60,38 @@ class FeatherMediaBridge(
 ) {
     @JavascriptInterface
     fun updateMetadata(title: String, artist: String, album: String, artworkUrl: String) {
-        MediaSessionManager.updateMetadata(context, tabId, title, artist, album, artworkUrl)
+        try {
+            MediaSessionManager.updateMetadata(context, tabId, title, artist, album, artworkUrl)
+        } catch (e: Throwable) { }
     }
 
     @JavascriptInterface
     fun updatePlaybackState(isPlaying: Boolean) {
-        MediaSessionManager.updatePlaybackState(context, tabId, isPlaying)
+        try {
+            MediaSessionManager.updatePlaybackState(context, tabId, isPlaying)
+        } catch (e: Throwable) { }
     }
 
     @JavascriptInterface
     fun onMediaPlaying(title: String, artist: String) {
-        MediaSessionManager.updateMetadata(context, tabId, title, artist)
-        MediaSessionManager.updatePlaybackState(context, tabId, true)
+        try {
+            MediaSessionManager.updateMetadata(context, tabId, title, artist)
+            MediaSessionManager.updatePlaybackState(context, tabId, true)
+        } catch (e: Throwable) { }
     }
 
     @JavascriptInterface
     fun onMediaPaused() {
-        MediaSessionManager.updatePlaybackState(context, tabId, false)
+        try {
+            MediaSessionManager.updatePlaybackState(context, tabId, false)
+        } catch (e: Throwable) { }
     }
 
     @JavascriptInterface
     fun onMediaEnded() {
-        MediaSessionManager.onMediaEnded(context, tabId)
+        try {
+            MediaSessionManager.onMediaEnded(context, tabId)
+        } catch (e: Throwable) { }
     }
 }
 
@@ -222,21 +233,28 @@ fun WebViewContainer(
         }
     }
 
+    // Clean up WebView memory, media players, and textures when tab is closed
+    DisposableEffect(tabId) {
+        onDispose {
+            try {
+                MediaSessionManager.unregisterWebView(tabId)
+                webViewRef?.apply {
+                    stopLoading()
+                    loadUrl("about:blank")
+                    clearHistory()
+                    (parent as? ViewGroup)?.removeView(this)
+                    destroy()
+                }
+                webViewRef = null
+            } catch (e: Throwable) { }
+        }
+    }
+
     key(tabId, renderCrashCount) {
         Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             AndroidView(
                 factory = { ctx ->
-                    val targetUiMode = if (effectiveDark) {
-                        Configuration.UI_MODE_NIGHT_YES
-                    } else {
-                        Configuration.UI_MODE_NIGHT_NO
-                    }
-                    val overrideConfig = Configuration(ctx.resources.configuration).apply {
-                        uiMode = targetUiMode or (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv())
-                    }
-                    val themedContext = ctx.createConfigurationContext(overrideConfig)
-
-                    PersistentWebView(themedContext).apply {
+                    PersistentWebView(ctx).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
                         addJavascriptInterface(FeatherMediaBridge(ctx.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
@@ -365,6 +383,13 @@ fun WebViewContainer(
                                         view?.evaluateJavascript(bgScript, null)
                                     } catch (e: Exception) { }
                                 }
+
+                                // Inject YouTube AdBlocker script early
+                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
+                                    try {
+                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
+                                    } catch (e: Exception) { }
+                                }
                             }
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
@@ -373,6 +398,11 @@ fun WebViewContainer(
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
+                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
+                                    try {
+                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -386,6 +416,11 @@ fun WebViewContainer(
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
+                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
+                                    try {
+                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -417,6 +452,13 @@ fun WebViewContainer(
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
+
+                                // Inject YouTube AdBlocker script
+                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
+                                    try {
+                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -555,6 +597,7 @@ fun WebViewContainer(
                         }
 
                         webViewRef = this
+                        MediaSessionManager.registerWebView(tabId, this)
                         if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
                             loadUrl(initialUrl)
                         }
@@ -562,6 +605,7 @@ fun WebViewContainer(
                 },
                 update = { webView ->
                     webViewRef = webView
+                    MediaSessionManager.registerWebView(tabId, webView)
                     if (webView is PersistentWebView) {
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }

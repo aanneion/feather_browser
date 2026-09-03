@@ -155,50 +155,96 @@ object FingerprintScriptGenerator {
                 // 5. Media Session API hooking for notification media player
                 window.__feather_actions = window.__feather_actions || {};
 
-                if ('mediaSession' in navigator) {
-                    const origMS = navigator.mediaSession;
-
-                    let storedMeta = origMS.metadata;
-                    Object.defineProperty(origMS, 'metadata', {
-                        get: function() { return storedMeta; },
-                        set: function(val) {
-                            storedMeta = val;
-                            if (window.FeatherMediaBridge && val) {
-                                let artUrl = '';
-                                if (val.artwork && val.artwork.length > 0) {
-                                    artUrl = val.artwork[val.artwork.length - 1].src || '';
-                                }
-                                window.FeatherMediaBridge.updateMetadata(
-                                    val.title || document.title || 'Playing Audio',
-                                    val.artist || 'YouTube',
-                                    val.album || '',
-                                    artUrl
-                                );
-                            }
-                        },
-                        configurable: true,
-                        enumerable: true
-                    });
-
-                    let storedState = origMS.playbackState || 'none';
-                    Object.defineProperty(origMS, 'playbackState', {
-                        get: function() { return storedState; },
-                        set: function(val) {
-                            storedState = val;
-                            if (window.FeatherMediaBridge) {
-                                window.FeatherMediaBridge.updatePlaybackState(val === 'playing');
-                            }
-                        },
-                        configurable: true,
-                        enumerable: true
-                    });
-
-                    const origSetHandler = origMS.setActionHandler.bind(origMS);
-                    origMS.setActionHandler = function(action, handler) {
-                        window.__feather_actions[action] = handler;
-                        return origSetHandler(action, handler);
-                    };
+                function getMediaThumbnail() {
+                    try {
+                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artwork && navigator.mediaSession.metadata.artwork.length > 0) {
+                            return navigator.mediaSession.metadata.artwork[navigator.mediaSession.metadata.artwork.length - 1].src || '';
+                        }
+                        const urlMatch = window.location.search.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+                        if (urlMatch && urlMatch[1]) {
+                            return 'https://img.youtube.com/vi/' + urlMatch[1] + '/hqdefault.jpg';
+                        }
+                    } catch(e) {}
+                    return '';
                 }
+
+                function getMediaTitle() {
+                    try {
+                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) {
+                            return navigator.mediaSession.metadata.title;
+                        }
+                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1');
+                        if (ytTitle && ytTitle.innerText && ytTitle.innerText.trim()) {
+                            return ytTitle.innerText.trim();
+                        }
+                        const docTitle = document.title.replace(/ - YouTube$/i, '').replace(/^\(\d+\)\s*/, '').trim();
+                        if (docTitle && docTitle !== 'YouTube') return docTitle;
+                    } catch(e) {}
+                    return 'Playing Audio';
+                }
+
+                function getMediaArtist() {
+                    try {
+                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist) {
+                            return navigator.mediaSession.metadata.artist;
+                        }
+                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a');
+                        if (ytAuthor && ytAuthor.innerText && ytAuthor.innerText.trim()) {
+                            return ytAuthor.innerText.trim();
+                        }
+                    } catch(e) {}
+                    return 'YouTube';
+                }
+
+                function notifyMediaBridge(isPlaying) {
+                    try {
+                        if (!window.FeatherMediaBridge) return;
+                        const title = getMediaTitle();
+                        const artist = getMediaArtist();
+                        const art = getMediaThumbnail();
+                        window.FeatherMediaBridge.updateMetadata(title, artist, 'Neon Browser', art);
+                        window.FeatherMediaBridge.updatePlaybackState(isPlaying);
+                    } catch(e) {}
+                }
+
+                try {
+                    if ('mediaSession' in navigator) {
+                        const origMS = navigator.mediaSession;
+                        try {
+                            const origSetMetadata = Object.getOwnPropertyDescriptor(MediaSession.prototype, 'metadata')?.set;
+                            if (origSetMetadata) {
+                                Object.defineProperty(origMS, 'metadata', {
+                                    set: function(val) {
+                                        try {
+                                            if (window.FeatherMediaBridge && val) {
+                                                let artUrl = '';
+                                                if (val.artwork && val.artwork.length > 0) {
+                                                    artUrl = val.artwork[val.artwork.length - 1].src || '';
+                                                }
+                                                window.FeatherMediaBridge.updateMetadata(
+                                                    val.title || getMediaTitle(),
+                                                    val.artist || getMediaArtist(),
+                                                    val.album || 'Neon Browser',
+                                                    artUrl || getMediaThumbnail()
+                                                );
+                                            }
+                                        } catch(e) {}
+                                        return origSetMetadata.call(this, val);
+                                    },
+                                    configurable: true
+                                });
+                            }
+                        } catch(e) {}
+
+                        try {
+                            const origSetHandler = origMS.setActionHandler.bind(origMS);
+                            origMS.setActionHandler = function(action, handler) {
+                                window.__feather_actions[action] = handler;
+                                return origSetHandler(action, handler);
+                            };
+                        } catch(e) {}
+                    }
+                } catch(e) {}
 
                 // 6. Direct media element tracking & action triggers
                 window.__feather_media_play = function() {
@@ -208,12 +254,25 @@ object FingerprintScriptGenerator {
                             return;
                         }
                     } catch(e) {}
-                    const v = document.querySelector('video, audio');
-                    if (v) v.play();
-                    const btn = document.querySelector('.ytp-play-button');
-                    if (btn && (btn.getAttribute('data-title-no-tooltip') === 'Play' || btn.getAttribute('aria-label')?.includes('Play'))) {
-                        btn.click();
-                    }
+                    try {
+                        const moviePlayer = document.getElementById('movie_player');
+                        if (moviePlayer && typeof moviePlayer.playVideo === 'function') {
+                            moviePlayer.playVideo();
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        const mediaEls = document.querySelectorAll('video, audio');
+                        if (mediaEls.length > 0) {
+                            mediaEls.forEach(function(m) {
+                                m.play().catch(function() {});
+                            });
+                        }
+                    } catch(e) {}
+                    try {
+                        const btn = document.querySelector('.ytp-play-button') || document.querySelector('[aria-label*="Play"]');
+                        if (btn) btn.click();
+                    } catch(e) {}
                 };
 
                 window.__feather_media_pause = function() {
@@ -223,12 +282,25 @@ object FingerprintScriptGenerator {
                             return;
                         }
                     } catch(e) {}
-                    const v = document.querySelector('video, audio');
-                    if (v) v.pause();
-                    const btn = document.querySelector('.ytp-play-button');
-                    if (btn && (btn.getAttribute('data-title-no-tooltip') === 'Pause' || btn.getAttribute('aria-label')?.includes('Pause'))) {
-                        btn.click();
-                    }
+                    try {
+                        const moviePlayer = document.getElementById('movie_player');
+                        if (moviePlayer && typeof moviePlayer.pauseVideo === 'function') {
+                            moviePlayer.pauseVideo();
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        const mediaEls = document.querySelectorAll('video, audio');
+                        if (mediaEls.length > 0) {
+                            mediaEls.forEach(function(m) {
+                                m.pause();
+                            });
+                        }
+                    } catch(e) {}
+                    try {
+                        const btn = document.querySelector('.ytp-play-button') || document.querySelector('[aria-label*="Pause"]');
+                        if (btn) btn.click();
+                    } catch(e) {}
                 };
 
                 window.__feather_media_next = function() {
@@ -262,35 +334,57 @@ object FingerprintScriptGenerator {
                     }
                 };
 
+                // Hook HTMLMediaElement prototype play and pause
+                try {
+                    const origPlay = HTMLMediaElement.prototype.play;
+                    HTMLMediaElement.prototype.play = function() {
+                        notifyMediaBridge(true);
+                        return origPlay.apply(this, arguments);
+                    };
+
+                    const origPause = HTMLMediaElement.prototype.pause;
+                    HTMLMediaElement.prototype.pause = function() {
+                        notifyMediaBridge(false);
+                        return origPause.apply(this, arguments);
+                    };
+                } catch(e) {}
+
                 // Periodic monitor for HTML media elements
+                let lastReportedState = null;
+                let lastReportedTitle = '';
                 const monitorMedia = function() {
-                    const els = document.querySelectorAll('video, audio');
-                    els.forEach(function(el) {
-                        if (el.__feather_monitored) return;
-                        el.__feather_monitored = true;
-
-                        el.addEventListener('play', function() {
-                            if (window.FeatherMediaBridge) {
-                                const title = (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title)
-                                    || document.title.replace(' - YouTube', '').trim() || 'Playing Audio';
-                                const artist = (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist)
-                                    || 'YouTube';
-                                window.FeatherMediaBridge.onMediaPlaying(title, artist);
+                    try {
+                        const els = document.querySelectorAll('video, audio');
+                        let anyPlaying = false;
+                        els.forEach(function(el) {
+                            if (!el.paused && !el.ended) {
+                                anyPlaying = true;
                             }
+                            if (el.__feather_monitored) return;
+                            el.__feather_monitored = true;
+
+                            el.addEventListener('play', function() {
+                                notifyMediaBridge(true);
+                            });
+
+                            el.addEventListener('pause', function() {
+                                notifyMediaBridge(false);
+                            });
+
+                            el.addEventListener('ended', function() {
+                                if (window.FeatherMediaBridge) {
+                                    window.FeatherMediaBridge.onMediaEnded();
+                                }
+                            });
                         });
 
-                        el.addEventListener('pause', function() {
-                            if (window.FeatherMediaBridge) {
-                                window.FeatherMediaBridge.onMediaPaused();
-                            }
-                        });
-
-                        el.addEventListener('ended', function() {
-                            if (window.FeatherMediaBridge) {
-                                window.FeatherMediaBridge.onMediaEnded();
-                            }
-                        });
-                    });
+                        const currentTitle = getMediaTitle();
+                        if (anyPlaying !== lastReportedState || (anyPlaying && currentTitle !== lastReportedTitle)) {
+                            lastReportedState = anyPlaying;
+                            lastReportedTitle = currentTitle;
+                            notifyMediaBridge(anyPlaying);
+                        }
+                    } catch(e) {}
                 };
                 setInterval(monitorMedia, 1500);
                 monitorMedia();

@@ -93,6 +93,12 @@ object ContentBlocker {
     fun shouldBlock(uri: Uri, isGlobalBlockerEnabled: Boolean, isSiteWhitelisted: Boolean): Boolean {
         if (!isGlobalBlockerEnabled || isSiteWhitelisted) return false
 
+        // Check specialized YouTube ad endpoints
+        if (YouTubeAdBlocker.isYouTubeAdRequest(uri)) {
+            _totalBlockedCount.value += 1
+            return true
+        }
+
         val host = uri.host?.lowercase() ?: return false
         val pathAndQuery = (uri.path ?: "") + (uri.query?.let { "?$it" } ?: "")
 

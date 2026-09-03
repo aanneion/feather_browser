@@ -12,6 +12,7 @@ import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.BrowserPreferences
 import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
@@ -85,36 +86,69 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _findQuery = MutableStateFlow("")
     val findQuery: StateFlow<String> = _findQuery.asStateFlow()
 
+    // Settings Preferences
+    val preferences = BrowserPreferences(application)
+
     // Settings State
-    val searchEngine = MutableStateFlow(SearchEngine.GOOGLE)
-    val themeMode = MutableStateFlow(AppThemeMode.SYSTEM)
-    val useMaterialYou = MutableStateFlow(true)
-    val newTabStyle = MutableStateFlow(NewTabStyle.PRODUCTIVITY)
-    val isAdBlockEnabled = MutableStateFlow(true)
-    val blockThirdPartyCookies = MutableStateFlow(true)
-    val httpsMode = MutableStateFlow(HttpsMode.PREFER_HTTPS)
-    val enableWebDarkMode = MutableStateFlow(false)
-    val enableBackgroundPlay = MutableStateFlow(true)
-    val downloadProvider = MutableStateFlow(DownloadProvider.BUILT_IN)
+    val searchEngine = MutableStateFlow(preferences.getSearchEngine())
+    val themeMode = MutableStateFlow(preferences.getThemeMode())
+    val useMaterialYou = MutableStateFlow(preferences.getUseMaterialYou())
+    val newTabStyle = MutableStateFlow(preferences.getNewTabStyle())
+    val isAdBlockEnabled = MutableStateFlow(preferences.isAdBlockEnabled())
+    val blockThirdPartyCookies = MutableStateFlow(preferences.isBlockThirdPartyCookies())
+    val httpsMode = MutableStateFlow(preferences.getHttpsMode())
+    val enableWebDarkMode = MutableStateFlow(preferences.isEnableWebDarkMode())
+    val enableBackgroundPlay = MutableStateFlow(preferences.isEnableBackgroundPlay())
+    val downloadProvider = MutableStateFlow(preferences.getDownloadProvider())
+
+    fun setSearchEngine(engine: SearchEngine) {
+        searchEngine.value = engine
+        preferences.setSearchEngine(engine)
+    }
 
     fun setThemeMode(mode: AppThemeMode) {
         themeMode.value = mode
+        preferences.setThemeMode(mode)
     }
 
     fun setUseMaterialYou(enabled: Boolean) {
         useMaterialYou.value = enabled
+        preferences.setUseMaterialYou(enabled)
     }
 
     fun setNewTabStyle(style: NewTabStyle) {
         newTabStyle.value = style
+        preferences.setNewTabStyle(style)
+    }
+
+    fun setAdBlockEnabled(enabled: Boolean) {
+        isAdBlockEnabled.value = enabled
+        preferences.setAdBlockEnabled(enabled)
+    }
+
+    fun setBlockThirdPartyCookies(enabled: Boolean) {
+        blockThirdPartyCookies.value = enabled
+        preferences.setBlockThirdPartyCookies(enabled)
+    }
+
+    fun setHttpsMode(mode: HttpsMode) {
+        httpsMode.value = mode
+        preferences.setHttpsMode(mode)
+    }
+
+    fun setEnableWebDarkMode(enabled: Boolean) {
+        enableWebDarkMode.value = enabled
+        preferences.setEnableWebDarkMode(enabled)
     }
 
     fun setBackgroundPlay(enabled: Boolean) {
         enableBackgroundPlay.value = enabled
+        preferences.setEnableBackgroundPlay(enabled)
     }
 
     fun setDownloadProvider(provider: DownloadProvider) {
         downloadProvider.value = provider
+        preferences.setDownloadProvider(provider)
     }
 
     // Whitelisted domains flow
@@ -389,6 +423,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.deleteTab(tabId)
             ContentBlocker.resetTabBlockCount(tabId)
+            try {
+                if (com.example.media.MediaSessionManager.activeMediaTabId.value == tabId) {
+                    com.example.media.MediaSessionManager.onMediaEnded(context, tabId)
+                }
+            } catch (e: Throwable) { }
             val remaining = currentTabs.value.filter { it.id != tabId }
             if (remaining.isNotEmpty()) {
                 if (_activeTabId.value == tabId) {
@@ -402,6 +441,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun closeAllTabs() {
         viewModelScope.launch {
+            try {
+                com.example.media.MediaSessionManager.stopPlayback(context)
+            } catch (e: Throwable) { }
             if (_isPrivateMode.value) {
                 repository.clearPrivateTabs()
                 privacyManager.cleanPrivateSessionData()

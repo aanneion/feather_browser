@@ -177,16 +177,19 @@ fun BrowserScreen(
             ) {
                 // Persistent WebViews for all open tabs to keep background playback and prevent reloads
                 for (tab in openTabs) {
-                    val isActive = (tab.id == activeTabId && !isHome)
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .zIndex(if (isActive) 1f else 0f)
-                            .graphicsLayer {
-                                alpha = if (isActive) 1f else 0f
-                            }
-                    ) {
-                        key(tab.id) {
+                    key(tab.id) {
+                        val isActive = (tab.id == activeTabId && !isHome)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (isActive) 1f else 0f)
+                                .graphicsLayer {
+                                    alpha = if (isActive) 1f else 0f
+                                }
+                                .then(
+                                    if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
+                                )
+                        ) {
                             WebViewContainer(
                                 tabId = tab.id,
                                 initialUrl = tab.url,
@@ -265,7 +268,7 @@ fun BrowserScreen(
             }
             SettingsScreen(
                 searchEngine = searchEngine,
-                onSearchEngineChange = { viewModel.searchEngine.value = it },
+                onSearchEngineChange = { viewModel.setSearchEngine(it) },
                 themeMode = themeMode,
                 onThemeModeChange = { viewModel.setThemeMode(it) },
                 useMaterialYou = useMaterialYou,
@@ -273,13 +276,13 @@ fun BrowserScreen(
                 newTabStyle = newTabStyle,
                 onNewTabStyleChange = { viewModel.setNewTabStyle(it) },
                 isAdBlockEnabled = isAdBlockEnabled,
-                onToggleAdBlock = { viewModel.isAdBlockEnabled.value = it },
+                onToggleAdBlock = { viewModel.setAdBlockEnabled(it) },
                 blockThirdPartyCookies = blockThirdPartyCookies,
-                onToggleBlockThirdPartyCookies = { viewModel.blockThirdPartyCookies.value = it },
+                onToggleBlockThirdPartyCookies = { viewModel.setBlockThirdPartyCookies(it) },
                 httpsMode = httpsMode,
-                onHttpsModeChange = { viewModel.httpsMode.value = it },
+                onHttpsModeChange = { viewModel.setHttpsMode(it) },
                 enableWebDarkMode = enableWebDarkMode,
-                onToggleWebDarkMode = { viewModel.enableWebDarkMode.value = it },
+                onToggleWebDarkMode = { viewModel.setEnableWebDarkMode(it) },
                 enableBackgroundPlay = enableBackgroundPlay,
                 onToggleBackgroundPlay = { viewModel.setBackgroundPlay(it) },
                 downloadProvider = downloadProvider,
@@ -366,7 +369,7 @@ fun BrowserScreen(
                 activeTab = activeTabState,
                 isGlobalBlockerEnabled = isAdBlockEnabled,
                 isSiteWhitelisted = isSiteWhitelisted,
-                onToggleGlobalBlocker = { viewModel.isAdBlockEnabled.value = it },
+                onToggleGlobalBlocker = { viewModel.setAdBlockEnabled(it) },
                 onToggleSiteException = { viewModel.toggleCurrentSiteAdBlockException() },
                 onDismiss = { viewModel.dismissSheet() }
             )

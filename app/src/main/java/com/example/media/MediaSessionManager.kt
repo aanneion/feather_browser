@@ -43,6 +43,17 @@ object MediaSessionManager {
     private val _controlActions = MutableSharedFlow<MediaControlAction>(extraBufferCapacity = 16)
     val controlActions = _controlActions.asSharedFlow()
 
+    // Strong/weak registry of WebViews per tabId so background commands can be directly dispatched
+    private val webViewRegistry = java.util.concurrent.ConcurrentHashMap<String, java.lang.ref.WeakReference<android.webkit.WebView>>()
+
+    fun registerWebView(tabId: String, webView: android.webkit.WebView) {
+        webViewRegistry[tabId] = java.lang.ref.WeakReference(webView)
+    }
+
+    fun unregisterWebView(tabId: String) {
+        webViewRegistry.remove(tabId)
+    }
+
     fun updateMetadata(
         context: Context,
         tabId: String,
@@ -52,7 +63,7 @@ object MediaSessionManager {
         artworkUrl: String = ""
     ) {
         val cleanTitle = title.trim().ifBlank { "Playing Audio" }
-        val cleanArtist = artist.trim().ifBlank { "Neon Browser" }
+        val cleanArtist = artist.trim().ifBlank { "Feather Browser" }
         val meta = BrowserMediaMetadata(
             title = cleanTitle,
             artist = cleanArtist,
@@ -86,11 +97,50 @@ object MediaSessionManager {
         scope.launch {
             _controlActions.emit(action)
         }
+        // Also execute directly on the registered WebView on the Main thread to ensure background execution succeeds
+        val targetTabId = _activeMediaTabId.value
+        val webView = targetTabId?.let { webViewRegistry[it]?.get() }
+            ?: webViewRegistry.values.firstNotNullOfOrNull { it.get() }
+
+        if (webView != null) {
+            webView.post {
+                val script = when (action) {
+                    MediaControlAction.PLAY -> {
+                        "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
+                    }
+                    MediaControlAction.PAUSE -> {
+                        "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
+                    }
+                    MediaControlAction.TOGGLE_PLAY_PAUSE -> {
+                        val isPlaying = _isPlaying.value
+                        if (isPlaying) {
+                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
+                        } else {
+                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
+                        }
+                    }
+                    MediaControlAction.NEXT -> {
+                        "if (window.__feather_media_next) window.__feather_media_next();"
+                    }
+                    MediaControlAction.PREVIOUS -> {
+                        "if (window.__feather_media_prev) window.__feather_media_prev();"
+                    }
+                    MediaControlAction.STOP -> {
+                        "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
+                    }
+                }
+                try {
+                    webView.evaluateJavascript(script, null)
+                } catch (e: Throwable) {}
+            }
+        }
     }
 
     fun onMediaEnded(context: Context, tabId: String) {
         if (_activeMediaTabId.value == tabId) {
             _isPlaying.value = false
+            _currentMetadata.value = null
+            _activeMediaTabId.value = null
             stopService(context)
         }
     }
@@ -100,6 +150,12 @@ object MediaSessionManager {
         _currentMetadata.value = null
         _activeMediaTabId.value = null
         stopService(context)
+    }
+
+    fun refreshNotification(context: Context) {
+        if (_isPlaying.value || _currentMetadata.value != null) {
+            startOrUpdateService(context)
+        }
     }
 
     private fun startOrUpdateService(context: Context) {

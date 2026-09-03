@@ -4,6 +4,8 @@ import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.support.v4.media.MediaMetadataCompat
@@ -14,11 +16,18 @@ import androidx.core.app.ServiceCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.example.MainActivity
 import com.example.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 
 class MediaPlaybackService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "browser_media_channel"
+        const val CHANNEL_ID = "neon_media_playback_channel_v3"
         const val NOTIFICATION_ID = 2001
 
         const val ACTION_UPDATE_STATE = "com.example.media.UPDATE_STATE"
@@ -31,11 +40,27 @@ class MediaPlaybackService : Service() {
     }
 
     private var mediaSession: MediaSessionCompat? = null
+    private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
+    private var cachedArtworkUrl: String = ""
+    private var cachedArtworkBitmap: Bitmap? = null
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        setupMediaSession()
 
+        // Immediate foreground promotion to comply with Android 8+ 5-second deadline
+        val initialNotification = buildNotification(
+            title = "Neon Browser",
+            artist = "Media Playback",
+            album = "Neon Browser",
+            isPlaying = true,
+            artwork = null
+        )
+        promoteToForeground(initialNotification)
+    }
+
+    private fun setupMediaSession() {
         mediaSession = MediaSessionCompat(this, "NeonMediaSession").apply {
             setFlags(
                 MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
@@ -98,11 +123,10 @@ class MediaPlaybackService : Service() {
         val metadata = MediaSessionManager.currentMetadata.value
         val isPlaying = MediaSessionManager.isPlaying.value
 
-        if (metadata == null) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-            return
-        }
+        val title = metadata?.title?.ifBlank { "Media Playing" } ?: "Media Playing"
+        val artist = metadata?.artist?.ifBlank { "Neon Browser" } ?: "YouTube"
+        val album = metadata?.album?.ifBlank { "Neon Browser" } ?: "Neon Browser"
+        val artworkUrl = metadata?.artworkUrl ?: ""
 
         // Update MediaSession state
         val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
@@ -120,12 +144,41 @@ class MediaPlaybackService : Service() {
         mediaSession?.setPlaybackState(playbackState)
 
         val metaBuilder = MediaMetadataCompat.Builder()
-            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, metadata.title)
-            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, metadata.artist)
-            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, metadata.album.ifBlank { "Neon Browser" })
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+
+        if (cachedArtworkBitmap != null) {
+            metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, cachedArtworkBitmap)
+            metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, cachedArtworkBitmap)
+        }
         mediaSession?.setMetadata(metaBuilder.build())
 
-        // Build Media Notification
+        val notification = buildNotification(title, artist, album, isPlaying, cachedArtworkBitmap)
+        promoteToForeground(notification)
+
+        // Asynchronously fetch artwork if new URL provided
+        if (artworkUrl.isNotBlank() && artworkUrl != cachedArtworkUrl) {
+            cachedArtworkUrl = artworkUrl
+            serviceScope.launch {
+                val bmp = fetchBitmap(artworkUrl)
+                if (bmp != null) {
+                    cachedArtworkBitmap = bmp
+                    val updatedNotification = buildNotification(title, artist, album, isPlaying, bmp)
+                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                    manager.notify(NOTIFICATION_ID, updatedNotification)
+                }
+            }
+        }
+    }
+
+    private fun buildNotification(
+        title: String,
+        artist: String,
+        album: String,
+        isPlaying: Boolean,
+        artwork: Bitmap?
+    ): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -167,11 +220,11 @@ class MediaPlaybackService : Service() {
         val playPauseIcon = if (isPlaying) R.drawable.ic_media_pause else R.drawable.ic_media_play
         val playPauseTitle = if (isPlaying) "Pause" else "Play"
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_media_notification)
-            .setContentTitle(metadata.title)
-            .setContentText(metadata.artist)
-            .setSubText("Neon Browser")
+            .setContentTitle(title)
+            .setContentText(artist)
+            .setSubText(album)
             .setContentIntent(contentPendingIntent)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -187,8 +240,15 @@ class MediaPlaybackService : Service() {
                     .setShowCancelButton(true)
                     .setCancelButtonIntent(stopIntent)
             )
-            .build()
 
+        if (artwork != null) {
+            builder.setLargeIcon(artwork)
+        }
+
+        return builder.build()
+    }
+
+    private fun promoteToForeground(notification: Notification) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 ServiceCompat.startForeground(
@@ -201,8 +261,25 @@ class MediaPlaybackService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
         } catch (e: Exception) {
-            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            notificationManager.notify(NOTIFICATION_ID, notification)
+            try {
+                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                notificationManager.notify(NOTIFICATION_ID, notification)
+            } catch (ex: Exception) { }
+        }
+    }
+
+    private suspend fun fetchBitmap(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
+        try {
+            val url = URL(urlString)
+            val connection = url.openConnection() as HttpURLConnection
+            connection.doInput = true
+            connection.connectTimeout = 3000
+            connection.readTimeout = 3000
+            connection.connect()
+            val input = connection.inputStream
+            BitmapFactory.decodeStream(input)
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -216,6 +293,8 @@ class MediaPlaybackService : Service() {
                 description = "Background audio and media playback controls"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                setSound(null, null)
+                enableVibration(false)
             }
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.createNotificationChannel(channel)
@@ -229,5 +308,6 @@ class MediaPlaybackService : Service() {
         mediaSession?.isActive = false
         mediaSession?.release()
         mediaSession = null
+        cachedArtworkBitmap = null
     }
 }

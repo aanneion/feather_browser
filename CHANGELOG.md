@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-09-03
+
+### Added & Enhanced
+- **🎵 YouTube & Web Background Playback**:
+  - Uninterrupted audio and media playback when switching tabs, navigating to the home screen, or turning the device screen off.
+  - Seamless multi-tab persistent WebViews ensuring background media does not restart or pause during tab switches.
+- **📱 System Media Player & Lock Screen Controls**:
+  - Full Android `MediaSession` integration with rich notification bar and lock screen player.
+  - Controls for Play, Pause, Next Track, Previous Track, and Close.
+  - Dynamic extraction and display of video title, artist/channel name, and high-resolution thumbnail artwork (`hqdefault.jpg`).
+  - Android 13+ dynamic `POST_NOTIFICATIONS` runtime permission handling.
+- **🛡️ Enhanced YouTube Ad Blocker**:
+  - Network-level interception for YouTube video ad streams, tracking calls, and DoubleClick endpoints.
+  - Client-side DOM filtering suppressing promoted cards, banner overlays, and companion ads.
+  - Automatic skip detection and fast-forwarding through unskippable video ad segments.
+
 ## [1.0.8] - 2026-09-01
 
 ### Added & Enhanced
