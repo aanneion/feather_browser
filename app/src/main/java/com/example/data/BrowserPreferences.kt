@@ -23,6 +23,24 @@ class BrowserPreferences(context: Context) {
         private const val KEY_WEB_DARK_MODE = "pref_web_dark_mode"
         private const val KEY_BACKGROUND_PLAY = "pref_background_play"
         private const val KEY_DOWNLOAD_PROVIDER = "pref_download_provider"
+        private const val KEY_WEATHER_ON_NEW_TAB = "pref_weather_on_new_tab"
+        private const val KEY_WEATHER_FAHRENHEIT = "pref_weather_fahrenheit"
+    }
+
+    fun isWeatherOnNewTab(): Boolean {
+        return prefs.getBoolean(KEY_WEATHER_ON_NEW_TAB, true)
+    }
+
+    fun setWeatherOnNewTab(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_WEATHER_ON_NEW_TAB, enabled).apply()
+    }
+
+    fun isWeatherFahrenheit(): Boolean {
+        return prefs.getBoolean(KEY_WEATHER_FAHRENHEIT, false)
+    }
+
+    fun setWeatherFahrenheit(fahrenheit: Boolean) {
+        prefs.edit().putBoolean(KEY_WEATHER_FAHRENHEIT, fahrenheit).apply()
     }
 
     fun getSearchEngine(): SearchEngine {

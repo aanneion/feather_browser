@@ -17,6 +17,8 @@ import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
+import com.example.weather.WeatherRepository
+import com.example.weather.WeatherUiState
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -100,6 +102,28 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val enableWebDarkMode = MutableStateFlow(preferences.isEnableWebDarkMode())
     val enableBackgroundPlay = MutableStateFlow(preferences.isEnableBackgroundPlay())
     val downloadProvider = MutableStateFlow(preferences.getDownloadProvider())
+    val isWeatherOnNewTab = MutableStateFlow(preferences.isWeatherOnNewTab())
+    val isWeatherFahrenheit = MutableStateFlow(preferences.isWeatherFahrenheit())
+
+    // Weather Repository & UI State Flow
+    val weatherRepository = WeatherRepository(application)
+    val weatherUiState: StateFlow<WeatherUiState> = weatherRepository.weatherState
+
+    fun setWeatherOnNewTab(enabled: Boolean) {
+        isWeatherOnNewTab.value = enabled
+        preferences.setWeatherOnNewTab(enabled)
+    }
+
+    fun setWeatherFahrenheit(fahrenheit: Boolean) {
+        isWeatherFahrenheit.value = fahrenheit
+        preferences.setWeatherFahrenheit(fahrenheit)
+    }
+
+    fun refreshWeather(forceNetwork: Boolean = false) {
+        viewModelScope.launch {
+            weatherRepository.refreshWeather(forceNetwork)
+        }
+    }
 
     fun setSearchEngine(engine: SearchEngine) {
         searchEngine.value = engine
@@ -258,6 +282,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             repository.initializeDefaultProfilesIfNeeded()
             repository.initializeDefaultShortcutsIfNeeded("default_personal")
             loadTabsForProfile(_currentProfileId.value)
+            if (isWeatherOnNewTab.value) {
+                weatherRepository.refreshWeather(forceNetwork = false)
+            }
         }
     }
 

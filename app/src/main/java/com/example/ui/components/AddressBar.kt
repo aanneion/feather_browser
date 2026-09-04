@@ -180,13 +180,14 @@ fun AddressBar(
 
                 // Address / Search Bar Input Field with depth
                 Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
-                    shadowElevation = 1.dp,
+                    shape = RoundedCornerShape(26.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+                    shadowElevation = 0.dp,
+                    tonalElevation = 0.dp,
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(46.dp)
                 ) {
                     Row(
                         modifier = Modifier
@@ -372,7 +373,7 @@ fun AddressBar(
                 if (!isEditing) {
                     Spacer(modifier = Modifier.width(4.dp))
 
-                    // Bookmark Icon Button
+                    // Quick Reload or Bookmark on Top Bar
                     if (hasValidUrl) {
                         IconButton(
                             onClick = onToggleBookmark,
@@ -384,55 +385,9 @@ fun AddressBar(
                                 imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
                                 contentDescription = if (isBookmarked) "Bookmarked" else "Bookmark this page",
                                 tint = if (isBookmarked) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                    }
-
-                    // Tabs Counter Button
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .focusProperties { canFocus = false }
-                            .clickable { onOpenTabs() }
-                            .padding(2.dp)
-                            .testTag("tabs_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(6.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)),
-                            modifier = Modifier.defaultMinSize(minWidth = 24.dp, minHeight = 24.dp)
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "$tabCount",
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-
-                    // Menu 3-dots Button
-                    IconButton(
-                        onClick = onOpenMenu,
-                        modifier = Modifier
-                            .size(36.dp)
-                            .focusProperties { canFocus = false }
-                            .testTag("menu_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.MoreVert,
-                            contentDescription = "Browser Menu",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
                 }
             }

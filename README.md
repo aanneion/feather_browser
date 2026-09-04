@@ -16,7 +16,7 @@
 
 <br />
 
-[🌟 Core Differentiators](#-core-differentiators) • [🛡️ Multi-Profile Isolation](#-isolated-multi-profiles--fingerprint-spoofing) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source)
+[🌟 Core Differentiators](#-core-differentiators) • [🛡️ Multi-Profile Isolation](#-isolated-multi-profiles--fingerprint-spoofing) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source) • [🔑 Release Signing & Updates](#-release-signing--seamless-in-place-updates)
 
 ---
 
@@ -89,6 +89,7 @@ Most mobile browsers share a single global cookie jar and device identity across
 - 📑 **Visual Tabs Manager**: Intuitive tab switcher with real-time website favicons, tab counts, and swift swipe-to-dismiss gestures.
 - 📱 **Desktop Site Mode**: Instant one-tap switcher between mobile and desktop site layouts.
 - 🔎 **In-Page Find & Highlight**: Live text search within web pages featuring match indicators and jump navigation.
+- 🌤️ **Live Local Weather Card**: Zero-permission real-time weather forecasts powered by open-meteo using privacy-respecting IP-based geolocation, complete with temperature toggle (°C/°F) and cache efficiency.
 - 💾 **Local-Only Persistence**: Fast Room database with SQLite for bookmarks and history. Zero cloud sync or telemetry.
 - ⬇️ **Native Download Manager**: Integrated download handler with file opening, progress tracking, and clean directory management.
 
@@ -137,6 +138,67 @@ cd lightweight_browser
 ./gradlew assembleRelease
 # Output: app/build/outputs/apk/release/app-release.apk
 ```
+
+---
+
+## 🔑 Release Signing & Seamless In-Place Updates
+
+### Why Android Shows "App Not Installed" or Google Play Protect Warnings
+When downloading consecutive APK builds without a persistent release keystore, each build is signed with an ephemeral debug or temporary key generated on-the-fly. Android's Package Manager enforces cryptographic signature identity:
+1. **"App not installed as package appears to be invalid / conflicts with an existing package"**: Triggered when trying to install an APK whose cryptographic certificate signature differs from the currently installed version. Android strictly blocks overwriting app data to prevent unauthorized app hijacking.
+2. **Google Play Protect / "Unrecognized App" Warning**: Displayed for any sideloaded APK whose signing certificate has not yet accrued reputation in Google Play Protect's cloud telemetry.
+
+### The Permanent Solution (Used by NewPipe, Tachiyomi, VLC)
+Open-source Android applications solve both issues permanently by creating **one persistent Release Keystore**, storing it securely as a GitHub Repository Secret, and letting GitHub Actions automatically sign every tag and push release with this exact same certificate.
+
+#### Step 1: Generate Your Permanent Keystore Locally
+Open your terminal (Linux, macOS, or Windows Git Bash / WSL) and run:
+```bash
+keytool -genkeypair -v \
+  -keystore release.keystore \
+  -alias feather_release_key \
+  -keyalg RSA \
+  -keysize 2048 \
+  -validity 10000 \
+  -storepass feather123 \
+  -keypass feather123 \
+  -dname "CN=Feather Browser, OU=Mobile, O=Feather Privacy, L=San Francisco, ST=California, C=US"
+```
+*(You can customize `-alias`, `-storepass`, and `-dname` as desired. **Back up `release.keystore` safely** — if lost, existing users cannot update without uninstalling!)*
+
+#### Step 2: Convert Keystore to Base64 String
+Encode the binary keystore file into a clean string so it can be safely stored in GitHub:
+```bash
+# On Linux / macOS:
+base64 -w 0 release.keystore > keystore_base64.txt
+# (On macOS if -w 0 is unsupported: base64 -i release.keystore | tr -d '\n' > keystore_base64.txt)
+
+# On Windows PowerShell:
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Out-File -Encoding ASCII keystore_base64.txt
+```
+
+#### Step 3: Add to GitHub Repository Secrets
+1. Go to your GitHub repository: `https://github.com/YOUR_USERNAME/YOUR_REPO`
+2. Navigate to **Settings** → **Secrets and variables** → **Actions**.
+3. Click **New repository secret**:
+   - **Name:** `RELEASE_KEYSTORE_BASE64`
+   - **Secret:** Paste the entire contents of `keystore_base64.txt`.
+4. *(Optional)* If you changed the default passwords in Step 1, also add:
+   - `KEYSTORE_PASSWORD`
+   - `KEY_ALIAS`
+   - `KEY_PASSWORD`
+
+#### Step 4: Automated GitHub Actions Workflow
+The repository's `.github/workflows/release.yml` is already pre-configured to:
+- Automatically decode `RELEASE_KEYSTORE_BASE64` during CI runs.
+- Increment the version code monotonically (`APP_VERSION_CODE = 100 + run_number`).
+- Compile an R8-optimized release APK (`Feather-Browser-v1.0.x.apk`).
+- Generate SHA-256 checksums and publish an official GitHub Release with downloadable APK assets.
+
+#### Step 5: Updating Your Phone In-Place
+1. For your very first install of the permanently signed version, uninstall any prior test/debug build to clean out temporary debug signatures.
+2. Install the newly signed APK from your GitHub Releases.
+3. From this point forward, every subsequent update (e.g. `v1.0.101` -> `v1.0.102`) will **update in-place with a single tap** without losing your bookmarks, history, profiles, or settings, and without signature conflict errors!
 
 ---
 

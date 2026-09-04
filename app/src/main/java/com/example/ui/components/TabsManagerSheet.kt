@@ -234,31 +234,37 @@ fun TabsManagerScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 10.dp),
+                        .padding(horizontal = 24.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Left: Close Tab Switcher (X)
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .testTag("dismiss_tabs_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close Tab Manager",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    // Center: Collapse Chevron Down (V)
                     Surface(
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         modifier = Modifier
                             .size(44.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onDismiss)
+                            .testTag("dismiss_tabs_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Tab Manager",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                    }
+
+                    // Center: Collapse Chevron Down (Return)
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
                             .clickable(onClick = onDismiss)
                     ) {
                         Box(contentAlignment = Alignment.Center) {
@@ -266,7 +272,7 @@ fun TabsManagerScreen(
                                 imageVector = Icons.Default.KeyboardArrowDown,
                                 contentDescription = "Return to Webpage",
                                 tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(26.dp)
                             )
                         }
                     }
@@ -275,9 +281,10 @@ fun TabsManagerScreen(
                     Surface(
                         shape = CircleShape,
                         color = profileColor,
+                        shadowElevation = 4.dp,
                         modifier = Modifier
                             .size(44.dp)
-                            .shadow(4.dp, CircleShape)
+                            .clip(CircleShape)
                             .clickable(onClick = onNewTab)
                             .testTag("new_tab_sheet_button")
                     ) {
@@ -308,16 +315,16 @@ fun DownsideTabCard(
     val domain = if (isHome) "Home" else UrlUtils.extractDomain(tab.url)
     val isYouTube = tab.url.contains("youtube.com", ignoreCase = true) || tab.url.contains("youtu.be", ignoreCase = true)
 
-    val cardBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-    val borderColor = if (isActive) profileColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
-    val borderWidth = if (isActive) 2.5.dp else 1.dp
+    val cardBgColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    val borderColor = if (isActive) profileColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    val borderWidth = if (isActive) 2.dp else 1.dp
 
     Surface(
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(20.dp),
         color = cardBgColor,
         border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),
-        tonalElevation = if (isActive) 8.dp else 2.dp,
-        shadowElevation = if (isActive) 10.dp else 3.dp,
+        tonalElevation = if (isActive) 3.dp else 1.dp,
+        shadowElevation = if (isActive) 4.dp else 1.dp,
         modifier = Modifier
             .width(225.dp)
             .fillMaxHeight()

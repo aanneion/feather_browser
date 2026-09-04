@@ -62,7 +62,10 @@ jobs:
 
       - name: Setup Android Release Keystore
         run: |
-          if [ ! -f release.keystore ]; then
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "Decoding permanent release.keystore from GitHub Secret..."
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
+          elif [ ! -f release.keystore ]; then
             echo "Generating consistent release.keystore for signing..."
             keytool -genkeypair -v -keystore release.keystore -alias feather_release_key -keyalg RSA -keysize 2048 -validity 10000 -storepass feather123 -keypass feather123 -dname "CN=Feather Browser, OU=Mobile Applications, O=Feather Privacy Browser, L=San Francisco, ST=California, C=US"
           fi
@@ -84,10 +87,8 @@ jobs:
           mkdir -p release-assets
           APK_NAME="Feather-Browser-${TAG}.apk"
           cp app/build/outputs/apk/release/app-release.apk "release-assets/${APK_NAME}"
-          cp app/build/outputs/apk/release/app-release.apk "release-assets/Feather-Browser-Release.apk"
           cd release-assets
           sha256sum "${APK_NAME}" > "${APK_NAME}.sha256"
-          sha256sum "Feather-Browser-Release.apk" > "Feather-Browser-Release.apk.sha256"
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT
 
       - name: Upload APK as Workflow Artifact

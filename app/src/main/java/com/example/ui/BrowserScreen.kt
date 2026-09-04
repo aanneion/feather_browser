@@ -51,6 +51,9 @@ fun BrowserScreen(
     val enableWebDarkMode by viewModel.enableWebDarkMode.collectAsStateWithLifecycle()
     val enableBackgroundPlay by viewModel.enableBackgroundPlay.collectAsStateWithLifecycle()
     val downloadProvider by viewModel.downloadProvider.collectAsStateWithLifecycle()
+    val isWeatherEnabled by viewModel.isWeatherOnNewTab.collectAsStateWithLifecycle()
+    val isWeatherFahrenheit by viewModel.isWeatherFahrenheit.collectAsStateWithLifecycle()
+    val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
     val adBlockExceptions by viewModel.adBlockExceptions.collectAsStateWithLifecycle()
     val quickShortcuts by viewModel.quickShortcuts.collectAsStateWithLifecycle()
 
@@ -93,8 +96,8 @@ fun BrowserScreen(
             topBar = {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp,
-                    shadowElevation = 1.dp,
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -140,6 +143,7 @@ fun BrowserScreen(
                     canGoBack = activeTabState?.canGoBack == true,
                     canGoForward = activeTabState?.canGoForward == true,
                     tabCount = currentTabs.size,
+                    isPrivateMode = isPrivateMode,
                     onGoBack = { viewModel.goBack() },
                     onGoForward = { viewModel.goForward() },
                     onGoHome = { viewModel.goHome() },
@@ -222,6 +226,10 @@ fun BrowserScreen(
                             bookmarks = bookmarks,
                             shortcuts = quickShortcuts,
                             newTabStyle = newTabStyle,
+                            weatherState = weatherUiState,
+                            isWeatherEnabled = isWeatherEnabled,
+                            isWeatherFahrenheit = isWeatherFahrenheit,
+                            onRefreshWeather = { viewModel.refreshWeather(forceNetwork = true) },
                             onNavigate = { viewModel.navigateTo(it) },
                             onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
                             onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
@@ -275,6 +283,10 @@ fun BrowserScreen(
                 onToggleMaterialYou = { viewModel.setUseMaterialYou(it) },
                 newTabStyle = newTabStyle,
                 onNewTabStyleChange = { viewModel.setNewTabStyle(it) },
+                isWeatherEnabled = isWeatherEnabled,
+                onToggleWeather = { viewModel.setWeatherOnNewTab(it) },
+                isWeatherFahrenheit = isWeatherFahrenheit,
+                onToggleWeatherFahrenheit = { viewModel.setWeatherFahrenheit(it) },
                 isAdBlockEnabled = isAdBlockEnabled,
                 onToggleAdBlock = { viewModel.setAdBlockEnabled(it) },
                 blockThirdPartyCookies = blockThirdPartyCookies,

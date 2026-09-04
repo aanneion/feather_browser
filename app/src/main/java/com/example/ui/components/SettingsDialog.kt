@@ -44,6 +44,10 @@ fun SettingsScreen(
     onToggleMaterialYou: (Boolean) -> Unit,
     newTabStyle: NewTabStyle,
     onNewTabStyleChange: (NewTabStyle) -> Unit,
+    isWeatherEnabled: Boolean = true,
+    onToggleWeather: (Boolean) -> Unit = {},
+    isWeatherFahrenheit: Boolean = false,
+    onToggleWeatherFahrenheit: (Boolean) -> Unit = {},
     isAdBlockEnabled: Boolean,
     onToggleAdBlock: (Boolean) -> Unit,
     blockThirdPartyCookies: Boolean,
@@ -303,6 +307,66 @@ fun SettingsScreen(
                                 onClick = { onNewTabStyleChange(style) },
                                 label = { Text(style.displayName, fontSize = 12.sp) },
                                 modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                    )
+
+                    // Weather on New Tab toggle
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Local Weather Widget",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Shows real-time weather on Home screen via approximate IP (zero location permissions needed)",
+                                fontSize = 11.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = isWeatherEnabled,
+                            onCheckedChange = onToggleWeather
+                        )
+                    }
+
+                    if (isWeatherEnabled) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 12.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Temperature Unit",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (isWeatherFahrenheit) "Displaying in Fahrenheit (°F)" else "Displaying in Celsius (°C)",
+                                    fontSize = 11.5.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            FilterChip(
+                                selected = isWeatherFahrenheit,
+                                onClick = { onToggleWeatherFahrenheit(!isWeatherFahrenheit) },
+                                label = { Text(if (isWeatherFahrenheit) "°F" else "°C", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
                             )
                         }
                     }

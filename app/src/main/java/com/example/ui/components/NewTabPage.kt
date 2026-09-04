@@ -40,6 +40,7 @@ import com.example.browser.SearchEngine
 import com.example.data.model.Bookmark
 import com.example.data.model.BrowserProfile
 import com.example.privacy.ContentBlocker
+import com.example.weather.WeatherUiState
 import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -51,6 +52,10 @@ fun NewTabPage(
     bookmarks: List<Bookmark>,
     shortcuts: List<QuickShortcutItem> = emptyList(),
     newTabStyle: com.example.browser.NewTabStyle = com.example.browser.NewTabStyle.PRODUCTIVITY,
+    weatherState: WeatherUiState = WeatherUiState.Loading,
+    isWeatherEnabled: Boolean = true,
+    isWeatherFahrenheit: Boolean = false,
+    onRefreshWeather: () -> Unit = {},
     onNavigate: (String) -> Unit,
     onAddShortcut: (String, String) -> Unit = { _, _ -> },
     onEditShortcut: (String, String, String) -> Unit = { _, _, _ -> },
@@ -154,11 +159,11 @@ fun NewTabPage(
             )
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Text(
             text = if (isPrivateMode) "Feather Private" else "Feather Browser",
-            fontSize = 23.sp,
+            fontSize = 24.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground
         )
@@ -167,10 +172,56 @@ fun NewTabPage(
             text = if (isPrivateMode) "Isolated session • Zero history saved" else if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) "Clean • Lightweight • Fast" else "Lightweight • Isolated Profiles • Tracker-Free",
             fontSize = 12.5.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 3.dp)
+            modifier = Modifier.padding(top = 2.dp)
         )
 
-        Spacer(modifier = Modifier.height(if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 24.dp else 28.dp))
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // Center Quick Search / URL Bar Pill
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .clickable { onNavigate("") }
+                .testTag("new_tab_center_search")
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Search",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                    modifier = Modifier.size(19.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Search or type URL",
+                    fontSize = 14.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        // Live Local Weather Widget (Zero permissions required, IP-based)
+        if (isWeatherEnabled && newTabStyle == com.example.browser.NewTabStyle.PRODUCTIVITY) {
+            Spacer(modifier = Modifier.height(14.dp))
+            WeatherCard(
+                state = weatherState,
+                isFahrenheit = isWeatherFahrenheit,
+                onRefresh = onRefreshWeather,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(modifier = Modifier.height(if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 24.dp else 22.dp))
 
         // Shortcuts Header with "+ Add" action
         Row(
@@ -228,22 +279,22 @@ fun NewTabPage(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(12.dp))
+                                .clip(RoundedCornerShape(14.dp))
                                 .combinedClickable(
                                     onClick = { onNavigate(shortcut.url) },
                                     onLongClick = { shortcutToEdit = shortcut }
                                 )
-                                .padding(vertical = 6.dp)
+                                .padding(vertical = 4.dp)
                                 .testTag("shortcut_${shortcut.title}")
                         ) {
                             Surface(
                                 shape = CircleShape,
-                                color = if (faviconBitmap != null) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f) else shortcutColor.copy(alpha = 0.15f),
+                                color = if (faviconBitmap != null) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f) else shortcutColor.copy(alpha = 0.12f),
                                 border = androidx.compose.foundation.BorderStroke(
                                     1.dp,
-                                    if (faviconBitmap != null) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f) else shortcutColor.copy(alpha = 0.35f)
+                                    if (faviconBitmap != null) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f) else shortcutColor.copy(alpha = 0.3f)
                                 ),
-                                modifier = Modifier.size(46.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     val bitmap = faviconBitmap
@@ -252,7 +303,7 @@ fun NewTabPage(
                                             bitmap = bitmap,
                                             contentDescription = shortcut.title,
                                             modifier = Modifier
-                                                .size(26.dp)
+                                                .size(28.dp)
                                                 .clip(CircleShape)
                                         )
                                     } else {
@@ -265,10 +316,10 @@ fun NewTabPage(
                                     }
                                 }
                             }
-                            Spacer(modifier = Modifier.height(5.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
                                 text = shortcut.title,
-                                fontSize = 11.sp,
+                                fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 maxLines = 1,
@@ -285,15 +336,15 @@ fun NewTabPage(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(RoundedCornerShape(12.dp))
+                                    .clip(RoundedCornerShape(14.dp))
                                     .clickable { showAddDialog = true }
-                                    .padding(vertical = 6.dp)
+                                    .padding(vertical = 4.dp)
                             ) {
                                 Surface(
                                     shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-                                    modifier = Modifier.size(46.dp)
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Box(contentAlignment = Alignment.Center) {
                                         Icon(
@@ -304,10 +355,10 @@ fun NewTabPage(
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(5.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Text(
                                     text = "Add",
-                                    fontSize = 11.sp,
+                                    fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Medium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
