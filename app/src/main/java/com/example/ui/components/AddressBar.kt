@@ -5,6 +5,8 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -15,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,7 +34,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -40,6 +46,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.*
 import com.example.data.model.BrowserProfile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,12 +69,38 @@ fun AddressBar(
 ) {
     var isEditing by remember { mutableStateOf(false) }
     var inputText by remember(activeTab?.url) { mutableStateOf(activeTab?.url ?: "") }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var isLoadingSuggestions by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+
+    // Real-time search suggestions: Fetch query predictions from Google Search as the user types
+    LaunchedEffect(inputText, isEditing) {
+        val trimmed = inputText.trim()
+        val currentUrl = activeTab?.url?.trim() ?: ""
+        if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
+            suggestions = emptyList()
+            isLoadingSuggestions = false
+            return@LaunchedEffect
+        }
+
+        isLoadingSuggestions = true
+        delay(150) // Debounce rapid keystrokes
+        val results = try {
+            SearchSuggestionService.getGoogleSuggestions(trimmed, maxResults = 8)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            emptyList()
+        }
+        suggestions = results
+        isLoadingSuggestions = false
+    }
 
     // Dismiss keyboard and address bar focus on back button/gesture
     BackHandler(enabled = isEditing) {
         isEditing = false
+        suggestions = emptyList()
         focusManager.clearFocus(force = true)
         inputText = activeTab?.url ?: ""
     }
@@ -86,6 +120,29 @@ fun AddressBar(
     }
     val keyboardController = LocalSoftwareKeyboardController.current
     val currentView = LocalView.current
+
+    val submitNavigation: (String) -> Unit = { queryOrUrl ->
+        val textToSubmit = queryOrUrl.trim()
+        if (textToSubmit.isNotBlank()) {
+            isEditing = false
+            suggestions = emptyList()
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+            try {
+                val imm = currentView.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
+                imm?.hideSoftInputFromWindow(currentView.windowToken, 0)
+                imm?.hideSoftInputFromWindow(currentView.applicationWindowToken, 0)
+                imm?.hideSoftInputFromWindow(currentView.rootView.windowToken, 0)
+                (currentView.context as? android.app.Activity)?.let { act ->
+                    act.currentFocus?.clearFocus()
+                    act.window?.decorView?.let { decor ->
+                        imm?.hideSoftInputFromWindow(decor.windowToken, 0)
+                    }
+                }
+            } catch (e: Exception) { }
+            onNavigate(textToSubmit)
+        }
+    }
 
     Box(
         modifier = modifier.fillMaxWidth()
@@ -184,29 +241,6 @@ fun AddressBar(
                             Spacer(modifier = Modifier.width(6.dp))
                         }
 
-                        // Text Field Submit Handler
-                        val submitNavigation = {
-                            val textToSubmit = inputText.trim()
-                            if (textToSubmit.isNotBlank()) {
-                                isEditing = false
-                                keyboardController?.hide()
-                                focusManager.clearFocus(force = true)
-                                try {
-                                    val imm = currentView.context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager
-                                    imm?.hideSoftInputFromWindow(currentView.windowToken, 0)
-                                    imm?.hideSoftInputFromWindow(currentView.applicationWindowToken, 0)
-                                    imm?.hideSoftInputFromWindow(currentView.rootView.windowToken, 0)
-                                    (currentView.context as? android.app.Activity)?.let { act ->
-                                        act.currentFocus?.clearFocus()
-                                        act.window?.decorView?.let { decor ->
-                                            imm?.hideSoftInputFromWindow(decor.windowToken, 0)
-                                        }
-                                    }
-                                } catch (e: Exception) { }
-                                onNavigate(textToSubmit)
-                            }
-                        }
-
                         BasicTextField(
                             value = inputText,
                             onValueChange = { inputText = it },
@@ -221,10 +255,10 @@ fun AddressBar(
                                 keyboardType = KeyboardType.Uri
                             ),
                             keyboardActions = KeyboardActions(
-                                onSearch = { submitNavigation() },
-                                onGo = { submitNavigation() },
-                                onDone = { submitNavigation() },
-                                onSend = { submitNavigation() }
+                                onSearch = { submitNavigation(inputText) },
+                                onGo = { submitNavigation(inputText) },
+                                onDone = { submitNavigation(inputText) },
+                                onSend = { submitNavigation(inputText) }
                             ),
                             decorationBox = { innerTextField ->
                                 if (inputText.isEmpty() && !isEditing) {
@@ -244,7 +278,7 @@ fun AddressBar(
                                 .onKeyEvent { keyEvent ->
                                     if (keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter) {
                                         if (keyEvent.type == KeyEventType.KeyUp || keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP) {
-                                            submitNavigation()
+                                            submitNavigation(inputText)
                                         }
                                         true
                                     } else {
@@ -258,6 +292,9 @@ fun AddressBar(
                                         if (newlyFocused && inputText.isBlank() && activeTab?.url?.isNotBlank() == true) {
                                             inputText = activeTab.url
                                         }
+                                        if (!newlyFocused) {
+                                            suggestions = emptyList()
+                                        }
                                     }
                                 }
                                 .testTag("address_input")
@@ -268,7 +305,10 @@ fun AddressBar(
                         if (isEditing) {
                             if (inputText.isNotEmpty()) {
                                 IconButton(
-                                    onClick = { inputText = "" },
+                                    onClick = {
+                                        inputText = ""
+                                        suggestions = emptyList()
+                                    },
                                     modifier = Modifier
                                         .size(28.dp)
                                         .focusProperties { canFocus = false }
@@ -283,7 +323,7 @@ fun AddressBar(
                             }
                             if (inputText.trim().isNotEmpty()) {
                                 IconButton(
-                                    onClick = { submitNavigation() },
+                                    onClick = { submitNavigation(inputText) },
                                     modifier = Modifier
                                         .size(28.dp)
                                         .focusProperties { canFocus = false }
@@ -428,6 +468,221 @@ fun AddressBar(
             HorizontalDivider(
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
                 thickness = 1.dp
+            )
+
+            // Real-Time Google Search Suggestions Dropdown
+            val trimmedQuery = inputText.trim()
+            val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
+                (suggestions.isNotEmpty() || isLoadingSuggestions)
+
+            AnimatedVisibility(
+                visible = shouldShowSuggestions,
+                enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(150)) +
+                        expandVertically(animationSpec = androidx.compose.animation.core.tween(200)),
+                exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(100)) +
+                       shrinkVertically(animationSpec = androidx.compose.animation.core.tween(150))
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                    color = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp),
+                    tonalElevation = 3.dp,
+                    shadowElevation = 6.dp,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .testTag("search_suggestions_container")
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // Header: Google Suggestions branding indicator
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = Color(0xFF4285F4),
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Google Suggestions",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Color(0xFF4285F4)
+                                )
+                            }
+                            if (isLoadingSuggestions) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(12.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = Color(0xFF4285F4)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+                            thickness = 0.5.dp
+                        )
+
+                        val looksLikeUrl = remember(trimmedQuery) {
+                            (trimmedQuery.contains(".") && !trimmedQuery.contains(" ") &&
+                                (trimmedQuery.startsWith("http://") || trimmedQuery.startsWith("https://") ||
+                                    trimmedQuery.matches(Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/.*)?$"))))
+                        }
+
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                        ) {
+                            // If user typed a direct URL, provide direct navigation option
+                            if (looksLikeUrl) {
+                                item(key = "direct_url_item") {
+                                    SuggestionRow(
+                                        icon = Icons.Default.Public,
+                                        iconTint = MaterialTheme.colorScheme.primary,
+                                        text = buildAnnotatedString {
+                                            append("Open ")
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+                                            append(trimmedQuery)
+                                            pop()
+                                        },
+                                        trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
+                                        onTrailingClick = null,
+                                        onClick = { submitNavigation(trimmedQuery) },
+                                        modifier = Modifier.testTag("suggestion_direct_url")
+                                    )
+                                }
+                            }
+
+                            // Direct search query item
+                            item(key = "direct_search_item") {
+                                SuggestionRow(
+                                    icon = Icons.Default.Search,
+                                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    text = buildAnnotatedString {
+                                        append("Search ")
+                                        pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                                        append("\"$trimmedQuery\"")
+                                        pop()
+                                    },
+                                    trailingIcon = Icons.Default.NorthWest,
+                                    onTrailingClick = {
+                                        inputText = trimmedQuery
+                                    },
+                                    onClick = { submitNavigation(trimmedQuery) },
+                                    modifier = Modifier.testTag("suggestion_query_direct")
+                                )
+                            }
+
+                            // Real-time Google query predictions
+                            val filteredSuggestions = suggestions.filter {
+                                !it.equals(trimmedQuery, ignoreCase = true)
+                            }
+
+                            itemsIndexed(
+                                items = filteredSuggestions,
+                                key = { index, suggestion -> "$index-$suggestion" }
+                            ) { index, suggestion ->
+                                val annotatedSuggestion = remember(trimmedQuery, suggestion) {
+                                    buildAnnotatedString {
+                                        val lowerTrimmed = trimmedQuery.lowercase()
+                                        val lowerSug = suggestion.lowercase()
+                                        if (lowerSug.startsWith(lowerTrimmed)) {
+                                            append(suggestion.substring(0, lowerTrimmed.length))
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                                            append(suggestion.substring(lowerTrimmed.length))
+                                            pop()
+                                        } else {
+                                            append(suggestion)
+                                        }
+                                    }
+                                }
+
+                                SuggestionRow(
+                                    icon = Icons.Default.TrendingUp,
+                                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                    text = annotatedSuggestion,
+                                    trailingIcon = Icons.Default.NorthWest,
+                                    onTrailingClick = {
+                                        inputText = suggestion
+                                    },
+                                    onClick = { submitNavigation(suggestion) },
+                                    modifier = Modifier.testTag("search_suggestion_$index")
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SuggestionRow(
+    icon: ImageVector,
+    iconTint: Color,
+    text: AnnotatedString,
+    trailingIcon: ImageVector?,
+    onTrailingClick: (() -> Unit)?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = 44.dp)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = iconTint,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = text,
+            fontSize = 14.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        if (trailingIcon != null && onTrailingClick != null) {
+            IconButton(
+                onClick = onTrailingClick,
+                modifier = Modifier
+                    .size(36.dp)
+                    .focusProperties { canFocus = false }
+                    .testTag("suggestion_insert_action")
+            ) {
+                Icon(
+                    imageVector = trailingIcon,
+                    contentDescription = "Insert into search bar",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        } else if (trailingIcon != null) {
+            Icon(
+                imageVector = trailingIcon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
             )
         }
     }

@@ -49,50 +49,68 @@ class MediaPlaybackService : Service() {
         createNotificationChannel()
         setupMediaSession()
 
+        val metadata = MediaSessionManager.currentMetadata.value
+        val isPlaying = MediaSessionManager.isPlaying.value
+
+        val title = metadata?.title?.ifBlank { "Media Playback" } ?: "Media Playback"
+        val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "Feather Browser"
+        val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
+
         // Immediate foreground promotion to comply with Android 8+ 5-second deadline
         val initialNotification = buildNotification(
-            title = "Neon Browser",
-            artist = "Media Playback",
-            album = "Neon Browser",
-            isPlaying = true,
-            artwork = null
+            title = title,
+            artist = artist,
+            album = album,
+            isPlaying = isPlaying,
+            artwork = cachedArtworkBitmap
         )
         promoteToForeground(initialNotification)
+
+        if (metadata == null && !isPlaying) {
+            mediaSession?.setActive(false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancel(NOTIFICATION_ID)
+            stopSelf()
+        }
     }
 
     private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(this, "NeonMediaSession").apply {
-            setFlags(
-                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
-                MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
-            )
+        val session = MediaSessionCompat(this, "NeonMediaSession")
+        session.setFlags(
+            MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
+            MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
+        )
 
-            setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay() {
-                    MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
-                }
+        session.setCallback(object : MediaSessionCompat.Callback() {
+            override fun onPlay() {
+                MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
+            }
 
-                override fun onPause() {
-                    MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
-                }
+            override fun onPause() {
+                MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
+            }
 
-                override fun onSkipToNext() {
-                    MediaSessionManager.dispatchAction(MediaControlAction.NEXT)
-                }
+            override fun onSkipToNext() {
+                MediaSessionManager.dispatchAction(MediaControlAction.NEXT)
+            }
 
-                override fun onSkipToPrevious() {
-                    MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
-                }
+            override fun onSkipToPrevious() {
+                MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
+            }
 
-                override fun onStop() {
-                    MediaSessionManager.stopPlayback(this@MediaPlaybackService)
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                }
-            })
+            override fun onStop() {
+                MediaSessionManager.stopPlayback(this@MediaPlaybackService)
+                session.isActive = false
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.cancel(NOTIFICATION_ID)
+                stopSelf()
+            }
+        })
 
-            isActive = true
-        }
+        session.isActive = true
+        mediaSession = session
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -105,13 +123,17 @@ class MediaPlaybackService : Service() {
             ACTION_NEXT -> MediaSessionManager.dispatchAction(MediaControlAction.NEXT)
             ACTION_PREV -> MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
             ACTION_STOP -> {
-                mediaSession?.isActive = false
+                MediaSessionManager.stopPlayback(this)
+                mediaSession?.setActive(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.cancel(NOTIFICATION_ID)
                 stopSelf()
                 return START_NOT_STICKY
             }
             ACTION_UPDATE_STATE -> {
                 updateNotificationAndSession()
+                return START_NOT_STICKY
             }
         }
 
@@ -122,6 +144,15 @@ class MediaPlaybackService : Service() {
     private fun updateNotificationAndSession() {
         val metadata = MediaSessionManager.currentMetadata.value
         val isPlaying = MediaSessionManager.isPlaying.value
+
+        if (metadata == null && !isPlaying) {
+            mediaSession?.setActive(false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancel(NOTIFICATION_ID)
+            stopSelf()
+            return
+        }
 
         val title = metadata?.title?.ifBlank { "Media Playing" } ?: "Media Playing"
         val artist = metadata?.artist?.ifBlank { "Neon Browser" } ?: "YouTube"
@@ -303,9 +334,21 @@ class MediaPlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        if (!MediaSessionManager.isPlaying.value) {
+            MediaSessionManager.stopPlayback(this)
+            mediaSession?.setActive(false)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+            manager?.cancel(NOTIFICATION_ID)
+            stopSelf()
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
-        mediaSession?.isActive = false
+        mediaSession?.setActive(false)
         mediaSession?.release()
         mediaSession = null
         cachedArtworkBitmap = null

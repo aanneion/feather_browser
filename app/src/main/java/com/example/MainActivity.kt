@@ -27,10 +27,8 @@ class MainActivity : ComponentActivity() {
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            MediaSessionManager.refreshNotification(this)
-        }
+    ) { _ ->
+        // No action needed; notification is posted only when media actively begins playing
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

@@ -209,13 +209,21 @@ object FingerprintScriptGenerator {
                     return 'YouTube';
                 }
 
+                let wasActivePlayback = false;
+
                 function notifyMediaBridge(isPlaying) {
                     try {
                         if (!window.FeatherMediaBridge) return;
-                        const title = getMediaTitle();
-                        const artist = getMediaArtist();
-                        const art = getMediaThumbnail();
-                        window.FeatherMediaBridge.updateMetadata(title, artist, 'Neon Browser', art);
+                        // Never send notifications or metadata if media was never playing
+                        if (!isPlaying && !wasActivePlayback) return;
+
+                        if (isPlaying) {
+                            wasActivePlayback = true;
+                            const title = getMediaTitle();
+                            const artist = getMediaArtist();
+                            const art = getMediaThumbnail();
+                            window.FeatherMediaBridge.updateMetadata(title, artist, 'Neon Browser', art);
+                        }
                         window.FeatherMediaBridge.updatePlaybackState(isPlaying);
                     } catch(e) {}
                 }
@@ -229,7 +237,7 @@ object FingerprintScriptGenerator {
                                 Object.defineProperty(origMS, 'metadata', {
                                     set: function(val) {
                                         try {
-                                            if (window.FeatherMediaBridge && val) {
+                                            if (window.FeatherMediaBridge && val && wasActivePlayback) {
                                                 let artUrl = '';
                                                 if (val.artwork && val.artwork.length > 0) {
                                                     artUrl = val.artwork[val.artwork.length - 1].src || '';
@@ -380,7 +388,6 @@ object FingerprintScriptGenerator {
                 // 9. Periodic monitor & watchdog for HTML media elements
                 let lastReportedState = null;
                 let lastReportedTitle = '';
-                let wasActivePlayback = false;
 
                 const monitorMedia = function() {
                     try {
@@ -395,6 +402,7 @@ object FingerprintScriptGenerator {
 
                             el.addEventListener('play', function() {
                                 window.__feather_explicit_pause = false;
+                                wasActivePlayback = true;
                                 notifyMediaBridge(true);
                             });
 
@@ -405,6 +413,7 @@ object FingerprintScriptGenerator {
                             });
 
                             el.addEventListener('ended', function() {
+                                wasActivePlayback = false;
                                 if (window.FeatherMediaBridge) {
                                     window.FeatherMediaBridge.onMediaEnded();
                                 }
@@ -426,7 +435,9 @@ object FingerprintScriptGenerator {
                         if (anyPlaying !== lastReportedState || (anyPlaying && currentTitle !== lastReportedTitle)) {
                             lastReportedState = anyPlaying;
                             lastReportedTitle = currentTitle;
-                            notifyMediaBridge(anyPlaying);
+                            if (anyPlaying || wasActivePlayback) {
+                                notifyMediaBridge(anyPlaying);
+                            }
                         }
                     } catch(e) {}
                 };

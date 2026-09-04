@@ -69,4 +69,34 @@ class ContentBlockerUnitTest {
         val prefs2 = com.example.data.BrowserPreferences(context)
         assertEquals(com.example.browser.NewTabStyle.MINIMALIST, prefs2.getNewTabStyle())
     }
+
+    @Test
+    fun searchSuggestionService_parsesGoogleJsonFormatCorrectly() {
+        val json = """["kotlin",["kotlin","kotlin tutorial","kotlin coroutines","kotlin documentation"]]"""
+        val suggestions = com.example.browser.SearchSuggestionService.parseSuggestionsJson(json, maxResults = 5)
+
+        assertEquals(4, suggestions.size)
+        assertEquals("kotlin", suggestions[0])
+        assertEquals("kotlin tutorial", suggestions[1])
+        assertEquals("kotlin coroutines", suggestions[2])
+        assertEquals("kotlin documentation", suggestions[3])
+    }
+
+    @Test
+    fun searchSuggestionService_limitsMaxResults() {
+        val json = """["ai",["ai tools","ai news","ai generated art","ai stocks","ai video"]]"""
+        val suggestions = com.example.browser.SearchSuggestionService.parseSuggestionsJson(json, maxResults = 3)
+
+        assertEquals(3, suggestions.size)
+        assertEquals("ai tools", suggestions[0])
+        assertEquals("ai news", suggestions[1])
+        assertEquals("ai generated art", suggestions[2])
+    }
+
+    @Test
+    fun searchSuggestionService_handlesMalformedJsonGracefully() {
+        val invalidJson = "<html><body>Not JSON</body></html>"
+        val suggestions = com.example.browser.SearchSuggestionService.parseSuggestionsJson(invalidJson, maxResults = 5)
+        assertTrue(suggestions.isEmpty())
+    }
 }

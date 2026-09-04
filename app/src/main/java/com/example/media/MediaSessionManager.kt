@@ -46,6 +46,9 @@ object MediaSessionManager {
     // Strong/weak registry of WebViews per tabId so background commands can be directly dispatched
     private val webViewRegistry = java.util.concurrent.ConcurrentHashMap<String, java.lang.ref.WeakReference<android.webkit.WebView>>()
 
+    @Volatile
+    private var isServiceActive = false
+
     fun registerWebView(tabId: String, webView: android.webkit.WebView) {
         webViewRegistry[tabId] = java.lang.ref.WeakReference(webView)
     }
@@ -74,7 +77,10 @@ object MediaSessionManager {
         _currentMetadata.value = meta
         _activeMediaTabId.value = tabId
 
-        startOrUpdateService(context)
+        // Only start or update service if media is currently playing or service is already active
+        if (_isPlaying.value || isServiceActive) {
+            startOrUpdateService(context)
+        }
     }
 
     fun updatePlaybackState(
@@ -82,14 +88,19 @@ object MediaSessionManager {
         tabId: String,
         playing: Boolean
     ) {
+        if (!playing && !_isPlaying.value && !isServiceActive) {
+            return
+        }
+
         _isPlaying.value = playing
         _activeMediaTabId.value = tabId
 
         if (playing) {
             startOrUpdateService(context)
-        } else {
-            // Keep notification visible in paused state so user can resume
+        } else if (isServiceActive && _currentMetadata.value != null) {
             startOrUpdateService(context)
+        } else {
+            stopPlayback(context)
         }
     }
 
@@ -137,11 +148,8 @@ object MediaSessionManager {
     }
 
     fun onMediaEnded(context: Context, tabId: String) {
-        if (_activeMediaTabId.value == tabId) {
-            _isPlaying.value = false
-            _currentMetadata.value = null
-            _activeMediaTabId.value = null
-            stopService(context)
+        if (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null) {
+            stopPlayback(context)
         }
     }
 
@@ -149,17 +157,22 @@ object MediaSessionManager {
         _isPlaying.value = false
         _currentMetadata.value = null
         _activeMediaTabId.value = null
+        isServiceActive = false
         stopService(context)
     }
 
     fun refreshNotification(context: Context) {
-        if (_isPlaying.value || _currentMetadata.value != null) {
+        if (_isPlaying.value && _currentMetadata.value != null) {
             startOrUpdateService(context)
         }
     }
 
     private fun startOrUpdateService(context: Context) {
+        if (!_isPlaying.value && _currentMetadata.value == null) {
+            return
+        }
         try {
+            isServiceActive = true
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 action = MediaPlaybackService.ACTION_UPDATE_STATE
             }
@@ -175,6 +188,7 @@ object MediaSessionManager {
 
     private fun stopService(context: Context) {
         try {
+            isServiceActive = false
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 action = MediaPlaybackService.ACTION_STOP
             }

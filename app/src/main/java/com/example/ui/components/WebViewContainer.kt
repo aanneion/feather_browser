@@ -29,6 +29,7 @@ import com.example.media.MediaControlAction
 import com.example.media.MediaSessionManager
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.Context
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewCompat
 
 private const val DESKTOP_USER_AGENT =
@@ -43,15 +44,23 @@ class PersistentWebView(context: Context) : WebView(context) {
             // to keep HTML5 audio/media engine playing in background without breaking detach lifecycle
             val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
             super.onWindowVisibilityChanged(effectiveVisibility)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             // Guard against Chromium native compositor edge cases during surface attachment
         }
     }
 
     override fun onPause() {
         if (!allowBackgroundPlayback) {
-            super.onPause()
+            try {
+                super.onPause()
+            } catch (e: Throwable) { }
         }
+    }
+
+    override fun onResume() {
+        try {
+            super.onResume()
+        } catch (e: Throwable) { }
     }
 }
 
@@ -115,6 +124,7 @@ fun WebViewContainer(
 ) {
     val context = LocalContext.current
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
+    var swipeRefreshRef by remember { mutableStateOf<SwipeRefreshLayout?>(null) }
     var defaultUserAgent by remember { mutableStateOf<String?>(null) }
     var customVideoView by remember { mutableStateOf<View?>(null) }
     var customVideoCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
@@ -149,6 +159,7 @@ fun WebViewContainer(
                 }
                 is WebViewAction.StopLoading -> {
                     webView.stopLoading()
+                    swipeRefreshRef?.isRefreshing = false
                 }
                 is WebViewAction.GoBack -> {
                     if (webView.canGoBack()) webView.goBack()
@@ -238,7 +249,12 @@ fun WebViewContainer(
     DisposableEffect(tabId) {
         onDispose {
             try {
+                if (MediaSessionManager.activeMediaTabId.value == tabId) {
+                    MediaSessionManager.onMediaEnded(context.applicationContext, tabId)
+                }
                 MediaSessionManager.unregisterWebView(tabId)
+                swipeRefreshRef?.removeAllViews()
+                swipeRefreshRef = null
                 webViewRef?.apply {
                     if (this is PersistentWebView) {
                         this.allowBackgroundPlayback = false
@@ -257,14 +273,26 @@ fun WebViewContainer(
 
     key(tabId, renderCrashCount) {
         Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            AndroidView(
+            AndroidView<SwipeRefreshLayout>(
                 factory = { ctx ->
                     val uiMode = if (effectiveDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
                     val config = Configuration(ctx.resources.configuration).apply {
                         this.uiMode = (this.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or uiMode
                     }
                     val themedContext = ctx.createConfigurationContext(config)
-                    PersistentWebView(themedContext).apply {
+
+                    val swipeRefresh = SwipeRefreshLayout(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        val primaryColor = if (effectiveDark) android.graphics.Color.parseColor("#80D8FF") else android.graphics.Color.parseColor("#00668B")
+                        val progressBgColor = if (effectiveDark) android.graphics.Color.parseColor("#2C2C2C") else android.graphics.Color.WHITE
+                        setColorSchemeColors(primaryColor)
+                        setProgressBackgroundColorSchemeColor(progressBgColor)
+                    }
+
+                    val webView = PersistentWebView(themedContext).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
                         addJavascriptInterface(FeatherMediaBridge(themedContext.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
@@ -451,6 +479,7 @@ fun WebViewContainer(
 
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 super.onPageFinished(view, url)
+                                swipeRefresh.isRefreshing = false
                                 url?.let {
                                     viewModel.onPageFinished(tabId, it)
                                 }
@@ -494,6 +523,7 @@ fun WebViewContainer(
                             ) {
                                 super.onReceivedError(view, request, error)
                                 if (request?.isForMainFrame == true) {
+                                    swipeRefresh.isRefreshing = false
                                     val failingUrl = request.url.toString()
                                     val errCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                                         error?.errorCode ?: -1
@@ -529,6 +559,7 @@ fun WebViewContainer(
                                 view: WebView?,
                                 detail: RenderProcessGoneDetail?
                             ): Boolean {
+                                swipeRefresh.isRefreshing = false
                                 try {
                                     (view?.parent as? ViewGroup)?.removeView(view)
                                     view?.destroy()
@@ -600,6 +631,9 @@ fun WebViewContainer(
                         webChromeClient = object : WebChromeClient() {
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 super.onProgressChanged(view, newProgress)
+                                if (newProgress >= 100) {
+                                    swipeRefresh.isRefreshing = false
+                                }
                                 viewModel.onProgressChanged(tabId, newProgress)
                             }
 
@@ -609,11 +643,13 @@ fun WebViewContainer(
                             }
 
                             override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+                                swipeRefresh.isEnabled = false
                                 customVideoView = view
                                 customVideoCallback = callback
                             }
 
                             override fun onHideCustomView() {
+                                swipeRefresh.isEnabled = true
                                 customVideoView = null
                                 customVideoCallback?.onCustomViewHidden()
                                 customVideoCallback = null
@@ -626,13 +662,46 @@ fun WebViewContainer(
                             loadUrl(initialUrl)
                         }
                     }
+
+                    swipeRefresh.addView(
+                        webView,
+                        ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                    )
+
+                    // Pull-to-refresh: only activate when child WebView is scrolled to the very top
+                    swipeRefresh.setOnChildScrollUpCallback { _, _ ->
+                        webView.scrollY > 0 || webView.canScrollVertically(-1)
+                    }
+                    swipeRefresh.setOnRefreshListener {
+                        webView.reload()
+                    }
+
+                    swipeRefreshRef = swipeRefresh
+                    swipeRefresh
                 },
-                update = { webView ->
+                update = { swipeRefresh ->
+                    swipeRefreshRef = swipeRefresh
+                    val webView = (0 until swipeRefresh.childCount)
+                        .map { swipeRefresh.getChildAt(it) }
+                        .filterIsInstance<PersistentWebView>()
+                        .firstOrNull() ?: return@AndroidView
+
                     webViewRef = webView
                     MediaSessionManager.registerWebView(tabId, webView)
                     if (webView is PersistentWebView) {
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
+
+                    // Pull-to-refresh enabled unless custom video view is active
+                    swipeRefresh.isEnabled = (customVideoView == null)
+
+                    val primaryColor = if (effectiveDark) android.graphics.Color.parseColor("#80D8FF") else android.graphics.Color.parseColor("#00668B")
+                    val progressBgColor = if (effectiveDark) android.graphics.Color.parseColor("#2C2C2C") else android.graphics.Color.WHITE
+                    swipeRefresh.setColorSchemeColors(primaryColor)
+                    swipeRefresh.setProgressBackgroundColorSchemeColor(progressBgColor)
 
                     // Keep web dark mode & theme styling synchronized dynamically
                     val targetBg = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE

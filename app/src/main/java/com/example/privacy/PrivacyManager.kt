@@ -39,10 +39,14 @@ class PrivacyManager(private val context: Context, private val database: AppData
         }
         if (clearCache) {
             withContext(Dispatchers.Main) {
-                // Clear WebView cache on main thread
-                val dummyWebView = WebView(context)
-                dummyWebView.clearCache(true)
-                dummyWebView.destroy()
+                try {
+                    // Clear WebView cache on main thread safely
+                    val dummyWebView = WebView(context)
+                    dummyWebView.clearCache(true)
+                    dummyWebView.destroy()
+                } catch (e: Throwable) {
+                    // Guard against headless/virtualized graphic compositor failures
+                }
             }
         }
     }
