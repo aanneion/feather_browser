@@ -589,7 +589,7 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Version 1.0.8 • Jetpack Compose M3 • Multi-Profile Identities & Adblock",
+                        text = "Version ${com.example.BuildConfig.VERSION_NAME} • Jetpack Compose M3 • Multi-Profile Identities & Adblock",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -650,17 +650,22 @@ private fun GlassySettingsCard(
             )
         }
 
+        val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+        val borderBrush = remember(outlineVariant) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    outlineVariant.copy(alpha = 0.45f),
+                    outlineVariant.copy(alpha = 0.12f)
+                )
+            )
+        }
+
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
             border = BorderStroke(
                 width = 1.dp,
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.12f)
-                    )
-                )
+                brush = borderBrush
             ),
             modifier = Modifier.fillMaxWidth()
         ) {
