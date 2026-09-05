@@ -54,6 +54,19 @@ enum class ActiveSheet {
     EDIT_BOOKMARK_DIALOG
 }
 
+enum class ContextMenuType {
+    LINK,
+    IMAGE,
+    IMAGE_LINK
+}
+
+data class ContextMenuData(
+    val url: String? = null,
+    val title: String? = null,
+    val imageUrl: String? = null,
+    val type: ContextMenuType = ContextMenuType.LINK
+)
+
 data class ActiveTabState(
     val id: String,
     val profileId: String,

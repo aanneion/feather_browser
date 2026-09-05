@@ -40,6 +40,7 @@ fun BrowserScreen(
     val isFindInPageActive by viewModel.isFindInPageActive.collectAsStateWithLifecycle()
     val findQuery by viewModel.findQuery.collectAsStateWithLifecycle()
     val isBarsVisible by viewModel.isBarsVisible.collectAsStateWithLifecycle()
+    val contextMenuData by viewModel.contextMenuData.collectAsStateWithLifecycle()
     var isAddressBarEditing by remember { mutableStateOf(false) }
 
     // Settings
@@ -425,6 +426,65 @@ fun BrowserScreen(
                 onDismiss = { viewModel.dismissSheet() }
             )
         }
+    }
+
+    // Context Menu for Link / Image Long-Press
+    contextMenuData?.let { menuData ->
+        ContextMenuSheet(
+            data = menuData,
+            onOpenInNewTab = { url ->
+                viewModel.openLinkInNewTab(url = url, openInBackground = false)
+            },
+            onOpenInBackground = { url ->
+                viewModel.openLinkInNewTab(url = url, openInBackground = true)
+                android.widget.Toast.makeText(context, "Opened in background tab", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onOpenInPrivateTab = { url ->
+                viewModel.openLinkInNewTab(url = url, openInBackground = false, isPrivate = true)
+            },
+            onCopyLinkAddress = { url ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", url))
+                android.widget.Toast.makeText(context, "Link address copied", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onCopyLinkText = { text ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Link Text", text))
+                android.widget.Toast.makeText(context, "Link text copied", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onShareLink = { url ->
+                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, url)
+                }
+                context.startActivity(android.content.Intent.createChooser(shareIntent, "Share link"))
+            },
+            onOpenImageInNewTab = { imageUrl ->
+                viewModel.openLinkInNewTab(url = imageUrl, openInBackground = false)
+            },
+            onDownloadImage = { imageUrl ->
+                viewModel.handleDownloadRequest(
+                    url = imageUrl,
+                    userAgent = "",
+                    contentDisposition = "",
+                    mimetype = "image/*",
+                    contentLength = 0L
+                )
+            },
+            onCopyImageAddress = { imageUrl ->
+                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("Image URL", imageUrl))
+                android.widget.Toast.makeText(context, "Image address copied", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onShareImage = { imageUrl ->
+                val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = "text/plain"
+                    putExtra(android.content.Intent.EXTRA_TEXT, imageUrl)
+                }
+                context.startActivity(android.content.Intent.createChooser(shareIntent, "Share image"))
+            },
+            onDismiss = { viewModel.dismissContextMenu() }
+        )
     }
 
     // Overlays / Sheets

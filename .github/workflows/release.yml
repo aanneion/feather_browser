@@ -58,7 +58,11 @@ jobs:
         with:
           java-version: '21'
           distribution: 'microsoft'
-          cache: gradle
+
+      - name: Setup Gradle Build Cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
 
       - name: Setup Android Release Keystore
         run: |
@@ -77,7 +81,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Release APK
-        run: ./gradlew assembleRelease --no-daemon -Dkotlin.compiler.execution.strategy=daemon --stacktrace
+        run: ./gradlew assembleRelease --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseParallelGC" --stacktrace
 
       - name: Prepare Release Assets
         id: prepare_asset

@@ -29,8 +29,14 @@ import com.example.media.MediaControlAction
 import com.example.media.MediaSessionManager
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
+import android.view.HapticFeedbackConstants
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewCompat
+import com.example.browser.ContextMenuData
+import com.example.browser.ContextMenuType
 
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -38,10 +44,21 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
+    private var isLayoutChanging = false
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (oldh != 0 && oldh != h) {
+            isLayoutChanging = true
+            postDelayed({ isLayoutChanging = false }, 350)
+        }
+    }
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
-        onScrollChangedListener?.invoke(t - oldt, t)
+        if (!isLayoutChanging) {
+            onScrollChangedListener?.invoke(t - oldt, t)
+        }
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
@@ -347,6 +364,48 @@ fun WebViewContainer(
                                 v.requestFocus()
                             }
                             false
+                        }
+
+                        // Long-press context menu for links, images, and image-links
+                        isLongClickable = true
+                        setOnLongClickListener { v ->
+                            val hitTest = hitTestResult ?: return@setOnLongClickListener false
+                            val type = hitTest.type
+                            val extra = hitTest.extra
+
+                            when (type) {
+                                WebView.HitTestResult.SRC_ANCHOR_TYPE,
+                                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE,
+                                WebView.HitTestResult.IMAGE_TYPE -> {
+                                    v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    val msg = Message.obtain()
+                                    msg.target = object : Handler(Looper.getMainLooper()) {
+                                        override fun handleMessage(m: Message) {
+                                            val linkUrl = m.data.getString("url")?.takeIf { it.isNotBlank() } ?: (if (type != WebView.HitTestResult.IMAGE_TYPE) extra else null)
+                                            val title = m.data.getString("title")?.takeIf { it.isNotBlank() }
+                                            val src = m.data.getString("src")?.takeIf { it.isNotBlank() } ?: (if (type == WebView.HitTestResult.IMAGE_TYPE) extra else null)
+
+                                            val menuType = when {
+                                                type == WebView.HitTestResult.IMAGE_TYPE -> ContextMenuType.IMAGE
+                                                type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE -> ContextMenuType.IMAGE_LINK
+                                                else -> ContextMenuType.LINK
+                                            }
+
+                                            viewModel.showContextMenu(
+                                                ContextMenuData(
+                                                    url = linkUrl,
+                                                    title = title,
+                                                    imageUrl = src,
+                                                    type = menuType
+                                                )
+                                            )
+                                        }
+                                    }
+                                    requestFocusNodeHref(msg)
+                                    true
+                                }
+                                else -> false
+                            }
                         }
 
                         // Default user agent capture

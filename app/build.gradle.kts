@@ -13,7 +13,7 @@ android {
   val envVersionName = System.getenv("APP_VERSION_NAME") ?: "1.0.108"
 
   defaultConfig {
-    applicationId = "com.aistudio.browser.lwbxbz"
+    applicationId = "apps.feather.browser"
     minSdk = 24
     targetSdk = 36
     versionCode = envVersionCode

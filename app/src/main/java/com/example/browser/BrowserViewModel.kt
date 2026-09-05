@@ -86,22 +86,37 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _isBarsVisible = MutableStateFlow(true)
     val isBarsVisible: StateFlow<Boolean> = _isBarsVisible.asStateFlow()
     private var accumulatedScrollY = 0
+    private var lastVisibilityToggleTime = 0L
 
     fun setBarsVisible(visible: Boolean) {
         if (_isBarsVisible.value != visible) {
             _isBarsVisible.value = visible
+            lastVisibilityToggleTime = System.currentTimeMillis()
         }
         accumulatedScrollY = 0
     }
 
     fun onWebScroll(deltaY: Int, scrollY: Int) {
-        if (scrollY <= 24) {
+        val now = System.currentTimeMillis()
+
+        // When near page top, always smoothly restore bars
+        if (scrollY <= 32) {
             accumulatedScrollY = 0
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
+                lastVisibilityToggleTime = now
             }
             return
         }
+
+        // Enforce cooldown so bars don't oscillate during or right after animations
+        if (now - lastVisibilityToggleTime < 400) {
+            accumulatedScrollY = 0
+            return
+        }
+
+        // Filter out microscopic finger tremors or resting hand jitter (< 3px)
+        if (kotlin.math.abs(deltaY) < 3) return
 
         // Direction reversal reset
         if ((deltaY > 0 && accumulatedScrollY < 0) || (deltaY < 0 && accumulatedScrollY > 0)) {
@@ -109,16 +124,58 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
         accumulatedScrollY += deltaY
 
-        if (accumulatedScrollY > 28) {
+        // Deliberate user scroll threshold to trigger hide or show
+        if (accumulatedScrollY > 70) {
             if (_isBarsVisible.value) {
                 _isBarsVisible.value = false
+                lastVisibilityToggleTime = now
             }
             accumulatedScrollY = 0
-        } else if (accumulatedScrollY < -24) {
+        } else if (accumulatedScrollY < -60) {
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
+                lastVisibilityToggleTime = now
             }
             accumulatedScrollY = 0
+        }
+    }
+
+    // Link / Image Long-Press Context Menu
+    private val _contextMenuData = MutableStateFlow<ContextMenuData?>(null)
+    val contextMenuData: StateFlow<ContextMenuData?> = _contextMenuData.asStateFlow()
+
+    fun showContextMenu(data: ContextMenuData) {
+        _contextMenuData.value = data
+    }
+
+    fun dismissContextMenu() {
+        _contextMenuData.value = null
+    }
+
+    fun openLinkInNewTab(
+        url: String,
+        openInBackground: Boolean = false,
+        isPrivate: Boolean = _isPrivateMode.value
+    ) {
+        viewModelScope.launch {
+            val tabId = UUID.randomUUID().toString()
+            val targetProfileId = if (isPrivate) "private_session" else _currentProfileId.value
+            val newTab = BrowserTab(
+                id = tabId,
+                profileId = targetProfileId,
+                url = url,
+                title = url,
+                isPrivate = isPrivate
+            )
+            repository.saveTab(newTab)
+            if (!openInBackground) {
+                if (isPrivate && !_isPrivateMode.value) {
+                    _isPrivateMode.value = true
+                } else if (!isPrivate && _isPrivateMode.value) {
+                    _isPrivateMode.value = false
+                }
+                selectTab(tabId, autoDismiss = true)
+            }
         }
     }
 
