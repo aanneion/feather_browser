@@ -155,20 +155,24 @@ fun BrowserScreen(
             modifier = Modifier.fillMaxSize()
         ) { innerPadding ->
             val activeTabId = activeTabState?.id ?: ""
-            val openTabs = remember(currentTabs, activeTabState) {
+            val activeTabProfileId = activeTabState?.profileId
+            val activeTabUrl = activeTabState?.url
+            val activeTabTitle = activeTabState?.title
+            val activeTabIsDesktop = activeTabState?.isDesktopMode
+            val activeTabIsPrivate = activeTabState?.isPrivate
+
+            val openTabs = remember(currentTabs, activeTabId) {
                 val map = linkedMapOf<String, BrowserTab>()
                 currentTabs.forEach { map[it.id] = it }
-                activeTabState?.let { active ->
-                    if (active.id.isNotBlank() && !map.containsKey(active.id)) {
-                        map[active.id] = BrowserTab(
-                            id = active.id,
-                            profileId = active.profileId,
-                            url = active.url,
-                            title = active.title,
-                            isDesktopMode = active.isDesktopMode,
-                            isPrivate = active.isPrivate
-                        )
-                    }
+                if (activeTabId.isNotBlank() && !map.containsKey(activeTabId)) {
+                    map[activeTabId] = BrowserTab(
+                        id = activeTabId,
+                        profileId = activeTabProfileId ?: "default",
+                        url = activeTabUrl ?: "",
+                        title = activeTabTitle ?: "New Tab",
+                        isDesktopMode = activeTabIsDesktop ?: false,
+                        isPrivate = activeTabIsPrivate ?: false
+                    )
                 }
                 map.values.toList()
             }

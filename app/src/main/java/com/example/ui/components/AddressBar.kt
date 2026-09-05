@@ -405,19 +405,20 @@ fun AddressBar(
                 label = "urlLoadingProgress"
             )
 
-            AnimatedVisibility(
-                visible = isPageLoading,
-                enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(100)),
-                exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(220))
+            // Fixed-height container (3.dp) prevents vertical layout jumping/jittering during page loads
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
             ) {
-                LinearProgressIndicator(
-                    progress = { animatedProgress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp),
-                    color = profileColor,
-                    trackColor = profileColor.copy(alpha = 0.12f)
-                )
+                if (isPageLoading) {
+                    LinearProgressIndicator(
+                        progress = { animatedProgress },
+                        modifier = Modifier.fillMaxSize(),
+                        color = profileColor,
+                        trackColor = profileColor.copy(alpha = 0.12f)
+                    )
+                }
             }
 
             HorizontalDivider(

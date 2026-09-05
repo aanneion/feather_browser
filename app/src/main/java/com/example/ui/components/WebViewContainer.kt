@@ -49,6 +49,20 @@ class PersistentWebView(context: Context) : WebView(context) {
         }
     }
 
+    override fun dispatchVisibilityChanged(changedView: View, visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
+            super.dispatchVisibilityChanged(changedView, effectiveVisibility)
+        } catch (e: Throwable) { }
+    }
+
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
+            super.onVisibilityChanged(changedView, effectiveVisibility)
+        } catch (e: Throwable) { }
+    }
+
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {

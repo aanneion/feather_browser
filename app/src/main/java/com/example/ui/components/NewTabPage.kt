@@ -92,49 +92,7 @@ fun NewTabPage(
             .padding(horizontal = 20.dp, vertical = if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 36.dp else 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        if (newTabStyle == com.example.browser.NewTabStyle.PRODUCTIVITY) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // Profile Badge Pill
-            Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = profileColor.copy(alpha = 0.12f),
-                border = androidx.compose.foundation.BorderStroke(1.dp, profileColor.copy(alpha = 0.3f)),
-                modifier = Modifier
-                    .clickable { onOpenProfiles() }
-                    .testTag("new_tab_profile_pill")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = if (isPrivateMode) Icons.Default.VpnKey else getProfileIcon(currentProfile?.iconName),
-                        contentDescription = null,
-                        tint = profileColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isPrivateMode) "Private Session" else "${currentProfile?.displayName ?: "Personal"} Profile",
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = profileColor
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Icon(
-                        imageVector = Icons.Default.ArrowDropDown,
-                        contentDescription = "Switch profile",
-                        tint = profileColor,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-        } else {
-            Spacer(modifier = Modifier.height(30.dp))
-        }
+        Spacer(modifier = Modifier.height(24.dp))
 
         // Feather App Icon Hero Logo
         Box(
@@ -176,39 +134,6 @@ fun NewTabPage(
         )
 
         Spacer(modifier = Modifier.height(18.dp))
-
-        // Center Quick Search / URL Bar Pill
-        Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clickable { onNavigate("") }
-                .testTag("new_tab_center_search")
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Search",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                    modifier = Modifier.size(19.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = "Search or type URL",
-                    fontSize = 14.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
 
         // Live Local Weather Widget (Zero permissions required, IP-based)
         if (isWeatherEnabled && newTabStyle == com.example.browser.NewTabStyle.PRODUCTIVITY) {

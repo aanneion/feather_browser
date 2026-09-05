@@ -76,7 +76,7 @@ class MediaPlaybackService : Service() {
     }
 
     private fun setupMediaSession() {
-        val session = MediaSessionCompat(this, "NeonMediaSession")
+        val session = MediaSessionCompat(this, "FeatherMediaSession")
         session.setFlags(
             MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
             MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
@@ -155,8 +155,8 @@ class MediaPlaybackService : Service() {
         }
 
         val title = metadata?.title?.ifBlank { "Media Playing" } ?: "Media Playing"
-        val artist = metadata?.artist?.ifBlank { "Neon Browser" } ?: "YouTube"
-        val album = metadata?.album?.ifBlank { "Neon Browser" } ?: "Neon Browser"
+        val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "YouTube"
+        val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
         val artworkUrl = metadata?.artworkUrl ?: ""
 
         // Update MediaSession state
@@ -173,6 +173,7 @@ class MediaPlaybackService : Service() {
             .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
             .build()
         mediaSession?.setPlaybackState(playbackState)
+        mediaSession?.isActive = true
 
         val metaBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)

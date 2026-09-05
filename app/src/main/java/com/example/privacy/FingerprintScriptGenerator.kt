@@ -121,13 +121,17 @@ object FingerprintScriptGenerator {
                 // 3. Suppress any bubbling visibilitychange & blur events
                 const suppressEvents = ['visibilitychange', 'webkitvisibilitychange', 'pagehide', 'blur', 'freeze'];
                 suppressEvents.forEach(function(evt) {
-                    window.addEventListener(evt, function(e) {
-                        if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
-                        if (e && e.stopPropagation) e.stopPropagation();
+                    origAddEventListener.call(window, evt, function(e) {
+                        if (e) {
+                            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                            if (e.stopPropagation) e.stopPropagation();
+                        }
                     }, true);
-                    document.addEventListener(evt, function(e) {
-                        if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
-                        if (e && e.stopPropagation) e.stopPropagation();
+                    origAddEventListener.call(document, evt, function(e) {
+                        if (e) {
+                            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                            if (e.stopPropagation) e.stopPropagation();
+                        }
                     }, true);
                 });
 
@@ -222,7 +226,7 @@ object FingerprintScriptGenerator {
                             const title = getMediaTitle();
                             const artist = getMediaArtist();
                             const art = getMediaThumbnail();
-                            window.FeatherMediaBridge.updateMetadata(title, artist, 'Neon Browser', art);
+                            window.FeatherMediaBridge.updateMetadata(title, artist, 'Feather Browser', art);
                         }
                         window.FeatherMediaBridge.updatePlaybackState(isPlaying);
                     } catch(e) {}
@@ -237,7 +241,7 @@ object FingerprintScriptGenerator {
                                 Object.defineProperty(origMS, 'metadata', {
                                     set: function(val) {
                                         try {
-                                            if (window.FeatherMediaBridge && val && wasActivePlayback) {
+                                            if (window.FeatherMediaBridge && val) {
                                                 let artUrl = '';
                                                 if (val.artwork && val.artwork.length > 0) {
                                                     artUrl = val.artwork[val.artwork.length - 1].src || '';
@@ -245,7 +249,7 @@ object FingerprintScriptGenerator {
                                                 window.FeatherMediaBridge.updateMetadata(
                                                     val.title || getMediaTitle(),
                                                     val.artist || getMediaArtist(),
-                                                    val.album || 'Neon Browser',
+                                                    val.album || 'Feather Browser',
                                                     artUrl || getMediaThumbnail()
                                                 );
                                             }
@@ -375,7 +379,7 @@ object FingerprintScriptGenerator {
                     const origPause = HTMLMediaElement.prototype.pause;
                     HTMLMediaElement.prototype.pause = function() {
                         // Check if the pause call was triggered by genuine user action or explicitly by media session bridge
-                        const isExplicitUserPause = window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 800);
+                        const isExplicitUserPause = window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 2500);
                         if (!isExplicitUserPause) {
                             // Suppress unwanted auto-pause triggered by YouTube visibility listeners or background state!
                             return;
@@ -407,7 +411,7 @@ object FingerprintScriptGenerator {
                             });
 
                             el.addEventListener('pause', function() {
-                                if (window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 800)) {
+                                if (window.__feather_explicit_pause || (Date.now() - lastUserTouchTime < 2500)) {
                                     notifyMediaBridge(false);
                                 }
                             });
@@ -422,7 +426,7 @@ object FingerprintScriptGenerator {
 
                         if (anyPlaying) {
                             wasActivePlayback = true;
-                        } else if (wasActivePlayback && !window.__feather_explicit_pause && (Date.now() - lastUserTouchTime > 1500)) {
+                        } else if (wasActivePlayback && !window.__feather_explicit_pause && (Date.now() - lastUserTouchTime > 2500)) {
                             // Video unexpectedly paused while in the background without user touch!
                             // Auto-resume background playback
                             const video = document.querySelector('video');
