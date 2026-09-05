@@ -37,6 +37,12 @@ private const val DESKTOP_USER_AGENT =
 
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
+    var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        onScrollChangedListener?.invoke(t - oldt, t)
+    }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         try {
@@ -309,6 +315,9 @@ fun WebViewContainer(
 
                     val webView = PersistentWebView(themedContext).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
+                        onScrollChangedListener = { deltaY, scrollY ->
+                            viewModel.onWebScroll(deltaY, scrollY)
+                        }
                         addJavascriptInterface(FeatherMediaBridge(themedContext.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,

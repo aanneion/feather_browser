@@ -82,6 +82,46 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _activeSheet = MutableStateFlow(ActiveSheet.NONE)
     val activeSheet: StateFlow<ActiveSheet> = _activeSheet.asStateFlow()
 
+    // Immersive Auto-Hiding Controls state (bars hide when scrolling down, reappear when scrolling up)
+    private val _isBarsVisible = MutableStateFlow(true)
+    val isBarsVisible: StateFlow<Boolean> = _isBarsVisible.asStateFlow()
+    private var accumulatedScrollY = 0
+
+    fun setBarsVisible(visible: Boolean) {
+        if (_isBarsVisible.value != visible) {
+            _isBarsVisible.value = visible
+        }
+        accumulatedScrollY = 0
+    }
+
+    fun onWebScroll(deltaY: Int, scrollY: Int) {
+        if (scrollY <= 24) {
+            accumulatedScrollY = 0
+            if (!_isBarsVisible.value) {
+                _isBarsVisible.value = true
+            }
+            return
+        }
+
+        // Direction reversal reset
+        if ((deltaY > 0 && accumulatedScrollY < 0) || (deltaY < 0 && accumulatedScrollY > 0)) {
+            accumulatedScrollY = 0
+        }
+        accumulatedScrollY += deltaY
+
+        if (accumulatedScrollY > 28) {
+            if (_isBarsVisible.value) {
+                _isBarsVisible.value = false
+            }
+            accumulatedScrollY = 0
+        } else if (accumulatedScrollY < -24) {
+            if (!_isBarsVisible.value) {
+                _isBarsVisible.value = true
+            }
+            accumulatedScrollY = 0
+        }
+    }
+
     // Find in Page state
     private val _isFindInPageActive = MutableStateFlow(false)
     val isFindInPageActive: StateFlow<Boolean> = _isFindInPageActive.asStateFlow()
@@ -435,6 +475,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun selectTab(tabId: String, autoDismiss: Boolean = true) {
+        setBarsVisible(true)
         _activeTabId.value = tabId
         val tab = currentTabs.value.find { it.id == tabId }
         val currentBlocked = ContentBlocker.getBlockCountForTab(tabId)
@@ -496,6 +537,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun navigateTo(input: String) {
+        setBarsVisible(true)
         val parsedUrl = UrlUtils.parseInputToUrl(input, searchEngine.value)
         if (parsedUrl.isNotBlank()) {
             var tabId = _activeTabId.value
@@ -538,6 +580,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun reload() {
+        setBarsVisible(true)
         val tabId = _activeTabId.value
         viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId)) }
     }
@@ -548,16 +591,19 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun goBack() {
+        setBarsVisible(true)
         val tabId = _activeTabId.value
         viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoBack(targetTabId = tabId)) }
     }
 
     fun goForward() {
+        setBarsVisible(true)
         val tabId = _activeTabId.value
         viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoForward(targetTabId = tabId)) }
     }
 
     fun goHome() {
+        setBarsVisible(true)
         val tabId = _activeTabId.value
         _activeTabState.update { it?.copy(url = "", title = "New Tab", progress = 0, isLoading = false) }
         viewModelScope.launch {
@@ -583,6 +629,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun startFindInPage() {
+        setBarsVisible(true)
         _isFindInPageActive.value = true
         _findQuery.value = ""
     }
@@ -616,6 +663,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // Callbacks from WebView
     fun onPageStarted(tabId: String, url: String) {
+        if (tabId == _activeTabId.value) {
+            setBarsVisible(true)
+        }
         if (url.isBlank() || url == "about:blank") {
             if (tabId == _activeTabId.value) {
                 _activeTabState.update { it?.copy(isLoading = false, progress = 0) }
@@ -878,6 +928,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // Sheets management
     fun openSheet(sheet: ActiveSheet) {
+        setBarsVisible(true)
         _activeSheet.value = sheet
     }
 

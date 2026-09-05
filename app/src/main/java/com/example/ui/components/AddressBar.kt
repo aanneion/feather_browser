@@ -65,6 +65,7 @@ fun AddressBar(
     onOpenProfiles: () -> Unit,
     onOpenPrivacyShield: () -> Unit,
     onOpenMenu: () -> Unit,
+    onEditingChanged: ((Boolean) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var isEditing by remember { mutableStateOf(false) }
@@ -100,6 +101,7 @@ fun AddressBar(
     // Dismiss keyboard and address bar focus on back button/gesture
     BackHandler(enabled = isEditing) {
         isEditing = false
+        onEditingChanged?.invoke(false)
         suggestions = emptyList()
         focusManager.clearFocus(force = true)
         inputText = activeTab?.url ?: ""
@@ -125,6 +127,7 @@ fun AddressBar(
         val textToSubmit = queryOrUrl.trim()
         if (textToSubmit.isNotBlank()) {
             isEditing = false
+            onEditingChanged?.invoke(false)
             suggestions = emptyList()
             keyboardController?.hide()
             focusManager.clearFocus(force = true)
@@ -290,6 +293,7 @@ fun AddressBar(
                                     val newlyFocused = focusState.isFocused
                                     if (newlyFocused != isEditing) {
                                         isEditing = newlyFocused
+                                        onEditingChanged?.invoke(newlyFocused)
                                         if (newlyFocused && inputText.isBlank() && activeTab?.url?.isNotBlank() == true) {
                                             inputText = activeTab.url
                                         }
