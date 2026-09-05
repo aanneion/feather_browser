@@ -329,7 +329,7 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Shows real-time weather on Home screen via approximate IP (zero location permissions needed)",
+                                text = "Shows real-time weather on Home screen (Productivity & Zen Minimal mode, zero location permissions needed)",
                                 fontSize = 11.5.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

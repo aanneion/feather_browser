@@ -296,6 +296,7 @@ fun WebViewContainer(
                     val themedContext = ctx.createConfigurationContext(config)
 
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
+                        isNestedScrollingEnabled = true
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -321,7 +322,15 @@ fun WebViewContainer(
                         // In virtualized environments or fallback crashes, ensure rendering stability
                         if (renderCrashCount > 0) {
                             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                        } else {
+                            setLayerType(View.LAYER_TYPE_HARDWARE, null)
                         }
+
+                        // High refresh rate (90Hz/120Hz) nested scrolling optimization
+                        isNestedScrollingEnabled = true
+                        overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+                        isVerticalScrollBarEnabled = true
+                        isHorizontalScrollBarEnabled = false
 
                         // Touch listener to gain focus away from address bar on tap
                         setOnTouchListener { v, event ->

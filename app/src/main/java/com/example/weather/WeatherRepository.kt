@@ -22,8 +22,8 @@ class WeatherRepository(
         private const val KEY_CACHED_LOCATION = "cached_location_json"
 
         // Cache lifetimes
-        private const val WEATHER_CACHE_TTL_MS = 20 * 60 * 1000L // 20 minutes
-        private const val LOCATION_CACHE_TTL_MS = 4 * 60 * 60 * 1000L // 4 hours
+        private const val WEATHER_CACHE_TTL_MS = 15 * 60 * 1000L // 15 minutes
+        private const val LOCATION_CACHE_TTL_MS = 30 * 60 * 1000L // 30 minutes
     }
 
     init {
@@ -36,8 +36,12 @@ class WeatherRepository(
     }
 
     suspend fun refreshWeather(forceNetwork: Boolean = false) {
-        val cached = loadCachedWeather()
         val now = System.currentTimeMillis()
+        if (forceNetwork) {
+            sharedPrefs.edit().remove(KEY_CACHED_LOCATION).remove(KEY_CACHED_WEATHER).apply()
+        }
+
+        val cached = loadCachedWeather()
 
         if (!forceNetwork && cached != null && (now - cached.timestamp) < WEATHER_CACHE_TTL_MS) {
             _weatherState.value = WeatherUiState.Success(cached)

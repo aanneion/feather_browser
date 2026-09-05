@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -83,13 +84,14 @@ fun NewTabPage(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = {
-                    focusManager.clearFocus(force = true)
-                })
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                focusManager.clearFocus(force = true)
             }
             .verticalScroll(scrollState)
-            .padding(horizontal = 20.dp, vertical = if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 36.dp else 20.dp),
+            .padding(horizontal = 20.dp, vertical = if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 28.dp else 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(modifier = Modifier.height(24.dp))
@@ -136,8 +138,8 @@ fun NewTabPage(
         Spacer(modifier = Modifier.height(18.dp))
 
         // Live Local Weather Widget (Zero permissions required, IP-based)
-        if (isWeatherEnabled && newTabStyle == com.example.browser.NewTabStyle.PRODUCTIVITY) {
-            Spacer(modifier = Modifier.height(14.dp))
+        if (isWeatherEnabled) {
+            Spacer(modifier = Modifier.height(if (newTabStyle == com.example.browser.NewTabStyle.MINIMALIST) 8.dp else 14.dp))
             WeatherCard(
                 state = weatherState,
                 isFahrenheit = isWeatherFahrenheit,
