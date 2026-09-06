@@ -22,6 +22,27 @@ enum class NewTabStyle(val displayName: String) {
     MINIMALIST("Zen Minimal")
 }
 
+enum class ToolbarPosition(val displayName: String, val description: String) {
+    BOTTOM("Bottom (Ergonomic)", "Easy one-handed thumb reachability"),
+    TOP("Top (Classic)", "Traditional address bar layout at the top")
+}
+
+data class ReaderArticle(
+    val title: String = "",
+    val byline: String = "",
+    val domain: String = "",
+    val contentText: String = "",
+    val wordCount: Int = 0,
+    val readingTimeMinutes: Int = 1
+)
+
+enum class ReaderTheme(val displayName: String, val bgHex: String, val textHex: String) {
+    LIGHT("Crisp Light", "#FFFFFF", "#0F172A"),
+    SEPIA("Warm Paper", "#FBF0D9", "#2C221E"),
+    NORDIC("Nordic Slate", "#1E293B", "#F8FAFC"),
+    AMOLED("OLED Black", "#000000", "#E4E4E7")
+}
+
 enum class DownloadProvider(val displayName: String, val description: String) {
     BUILT_IN("Built-in Manager", "Standard system download manager"),
     EXTERNAL_APP("External / Ask Every Time", "Open 1DM, ADM, IDM, or system app chooser")
@@ -51,7 +72,8 @@ enum class ActiveSheet {
     SETTINGS,
     CLEAR_DATA,
     NEW_PROFILE_DIALOG,
-    EDIT_BOOKMARK_DIALOG
+    EDIT_BOOKMARK_DIALOG,
+    READER_MODE
 }
 
 enum class ContextMenuType {
@@ -126,5 +148,26 @@ object UrlUtils {
 
     fun isHttps(url: String): Boolean {
         return url.startsWith("https://", ignoreCase = true)
+    }
+}
+
+object DeviceUtils {
+    val isEmulator: Boolean by lazy {
+        val fingerprint = android.os.Build.FINGERPRINT.lowercase()
+        val model = android.os.Build.MODEL.lowercase()
+        val hardware = android.os.Build.HARDWARE.lowercase()
+        val brand = android.os.Build.BRAND.lowercase()
+        val device = android.os.Build.DEVICE.lowercase()
+        val product = android.os.Build.PRODUCT.lowercase()
+
+        fingerprint.startsWith("generic")
+            || fingerprint.startsWith("unknown")
+            || model.contains("google_sdk")
+            || model.contains("emulator")
+            || model.contains("android sdk built for")
+            || hardware.contains("goldfish")
+            || hardware.contains("ranchu")
+            || (brand.startsWith("generic") && device.startsWith("generic"))
+            || product.contains("sdk")
     }
 }

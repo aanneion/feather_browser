@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -19,16 +20,24 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.UrlUtils
 import com.example.data.model.BrowserProfile
 import com.example.data.model.BrowserTab
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 @Composable
 fun TabsManagerScreen(
@@ -42,7 +51,9 @@ fun TabsManagerScreen(
     onCloseAllTabs: () -> Unit,
     onTogglePrivateMode: () -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    profiles: List<BrowserProfile> = emptyList(),
+    onSelectProfile: ((String) -> Unit)? = null
 ) {
     val profileColor = if (isPrivateMode) Color(0xFF9333EA) else {
         try {
@@ -110,40 +121,88 @@ fun TabsManagerScreen(
                     )
                 }
 
-                // Top Controls Bar (Profile pill, Private mode toggle, Close All)
+                // Top Controls Bar (Profile pills carousel, Private toggle, Close All)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Profile / Tabs count badge
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = profileColor.copy(alpha = 0.12f),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, profileColor.copy(alpha = 0.25f))
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                    if (profiles.isNotEmpty() && onSelectProfile != null) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(
-                                imageVector = if (isPrivateMode) Icons.Default.VpnKey else getProfileIcon(currentProfile?.iconName),
-                                contentDescription = null,
-                                tint = profileColor,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isPrivateMode) "Private (${tabs.size})" else "${currentProfile?.displayName ?: "Personal"} (${tabs.size})",
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = profileColor
-                            )
+                            items(profiles, key = { it.id }) { prof ->
+                                val isProfActive = !isPrivateMode && prof.id == currentProfile?.id
+                                val profColor = try {
+                                    Color(android.graphics.Color.parseColor(prof.colorHex))
+                                } catch (e: Exception) {
+                                    MaterialTheme.colorScheme.primary
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    color = if (isProfActive) profColor.copy(alpha = 0.18f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        if (isProfActive) 1.5.dp else 1.dp,
+                                        if (isProfActive) profColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                    ),
+                                    modifier = Modifier
+                                        .clickable { onSelectProfile(prof.id) }
+                                        .testTag("tab_profile_pill_${prof.id}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = getProfileIcon(prof.iconName),
+                                            contentDescription = null,
+                                            tint = if (isProfActive) profColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(5.dp))
+                                        Text(
+                                            text = prof.displayName,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isProfActive) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (isProfActive) profColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
                         }
+                    } else {
+                        // Profile / Tabs count badge
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = profileColor.copy(alpha = 0.12f),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, profileColor.copy(alpha = 0.25f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (isPrivateMode) Icons.Default.VpnKey else getProfileIcon(currentProfile?.iconName),
+                                    contentDescription = null,
+                                    tint = profileColor,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isPrivateMode) "Private (${tabs.size})" else "${currentProfile?.displayName ?: "Personal"} (${tabs.size})",
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = profileColor
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
                     }
 
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     // Private Mode Switcher
                     IconButton(
@@ -319,15 +378,47 @@ fun DownsideTabCard(
     val borderColor = if (isActive) profileColor else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     val borderWidth = if (isActive) 2.dp else 1.dp
 
+    var offsetY by remember { mutableStateOf(0f) }
+    val animatedOffsetY by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = offsetY,
+        animationSpec = androidx.compose.animation.core.spring(
+            dampingRatio = androidx.compose.animation.core.Spring.DampingRatioMediumBouncy
+        ),
+        label = "cardSwipeDismiss"
+    )
+    val cardAlpha = (1f - (abs(animatedOffsetY) / 300f)).coerceIn(0.15f, 1f)
+    val haptic = LocalHapticFeedback.current
+
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = cardBgColor,
         border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor),
-        tonalElevation = if (isActive) 3.dp else 1.dp,
-        shadowElevation = if (isActive) 4.dp else 1.dp,
+        tonalElevation = if (isActive) 4.dp else 1.dp,
+        shadowElevation = if (isActive) 6.dp else 2.dp,
         modifier = Modifier
             .width(225.dp)
             .fillMaxHeight()
+            .offset { IntOffset(0, animatedOffsetY.roundToInt()) }
+            .graphicsLayer { alpha = cardAlpha }
+            .pointerInput(tab.id) {
+                detectVerticalDragGestures(
+                    onDragEnd = {
+                        if (abs(offsetY) > 160f) {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onClose()
+                        } else {
+                            offsetY = 0f
+                        }
+                    },
+                    onDragCancel = {
+                        offsetY = 0f
+                    },
+                    onVerticalDrag = { change, dragAmount ->
+                        change.consume()
+                        offsetY += dragAmount
+                    }
+                )
+            }
             .clickable(onClick = onClick)
             .testTag("tab_card_${tab.id}")
     ) {
@@ -336,6 +427,21 @@ fun DownsideTabCard(
                 .fillMaxSize()
                 .padding(10.dp)
         ) {
+            // Subtle top gradient accent indicator
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(profileColor, profileColor.copy(alpha = 0.2f))
+                        )
+                    )
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             // Header: Favicon/Badge + Tab Title + Close Button
             Row(
                 verticalAlignment = Alignment.CenterVertically,

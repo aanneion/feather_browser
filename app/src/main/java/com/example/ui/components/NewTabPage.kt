@@ -63,6 +63,9 @@ fun NewTabPage(
     onRemoveShortcut: (String) -> Unit = {},
     onOpenProfiles: () -> Unit,
     onOpenPrivacyShield: () -> Unit,
+    onOpenBookmarks: (() -> Unit)? = null,
+    onOpenHistory: (() -> Unit)? = null,
+    onOpenDownloads: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -135,7 +138,88 @@ fun NewTabPage(
             modifier = Modifier.padding(top = 2.dp)
         )
 
-        Spacer(modifier = Modifier.height(18.dp))
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // Active Profile Pill
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = profileColor.copy(alpha = 0.12f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, profileColor.copy(alpha = 0.28f)),
+            modifier = Modifier
+                .clickable { onOpenProfiles() }
+                .testTag("home_profile_pill")
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = if (isPrivateMode) Icons.Default.VpnKey else getProfileIcon(currentProfile?.iconName),
+                    contentDescription = null,
+                    tint = profileColor,
+                    modifier = Modifier.size(14.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = if (isPrivateMode) "Private Mode" else (currentProfile?.displayName ?: "Personal Profile"),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = profileColor
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(
+                    imageVector = Icons.Default.SwapHoriz,
+                    contentDescription = "Switch Profile",
+                    tint = profileColor.copy(alpha = 0.7f),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+        }
+
+        // Bento Quick Action Capsules
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            BentoQuickActionItem(
+                icon = Icons.Default.Shield,
+                label = "Shield",
+                accentColor = MaterialTheme.colorScheme.primary,
+                onClick = onOpenPrivacyShield,
+                modifier = Modifier.weight(1f)
+            )
+            if (onOpenBookmarks != null) {
+                BentoQuickActionItem(
+                    icon = Icons.Default.Bookmark,
+                    label = "Bookmarks",
+                    accentColor = Color(0xFFF59E0B),
+                    onClick = onOpenBookmarks,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (onOpenHistory != null) {
+                BentoQuickActionItem(
+                    icon = Icons.Default.History,
+                    label = "History",
+                    accentColor = Color(0xFF8B5CF6),
+                    onClick = onOpenHistory,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            if (onOpenDownloads != null) {
+                BentoQuickActionItem(
+                    icon = Icons.Default.Download,
+                    label = "Downloads",
+                    accentColor = Color(0xFF10B981),
+                    onClick = onOpenDownloads,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Live Local Weather Widget (Zero permissions required, IP-based)
         if (isWeatherEnabled) {
@@ -583,3 +667,54 @@ fun FeatureCheckItem(
         )
     }
 }
+
+@Composable
+private fun BentoQuickActionItem(
+    icon: ImageVector,
+    label: String,
+    accentColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)),
+        modifier = modifier
+            .clickable {
+                haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.TextHandleMove)
+                onClick()
+            }
+    ) {
+        Column(
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(accentColor.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = accentColor,
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = label,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+

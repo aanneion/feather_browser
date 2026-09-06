@@ -38,6 +38,7 @@ fun BrowserMenuSheet(
     onOpenSettings: () -> Unit,
     onExitBrowser: () -> Unit,
     onDismiss: () -> Unit,
+    onOpenReaderMode: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val modalBottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -152,6 +153,18 @@ fun BrowserMenuSheet(
             )
 
             if (hasActiveUrl) {
+                if (onOpenReaderMode != null) {
+                    MenuItemRow(
+                        icon = Icons.Outlined.ChromeReaderMode,
+                        title = "Reader Mode",
+                        tint = MaterialTheme.colorScheme.primary,
+                        onClick = {
+                            onDismiss()
+                            onOpenReaderMode()
+                        }
+                    )
+                }
+
                 MenuItemRow(
                     icon = Icons.Default.Search,
                     title = "Find in Page",

@@ -149,6 +149,7 @@ fun WebViewContainer(
     currentProfile: BrowserProfile?,
     viewModel: BrowserViewModel,
     actions: SharedFlow<WebViewAction>,
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -219,6 +220,67 @@ fun WebViewContainer(
                 }
                 is WebViewAction.ClearFindMatches -> {
                     webView.clearMatches()
+                }
+                is WebViewAction.ExtractReaderContent -> {
+                    val script = """
+                        (function() {
+                            try {
+                                var title = document.querySelector('h1')?.innerText || document.title || '';
+                                var byline = document.querySelector('.byline, .author, [rel="author"], [itemprop="author"]')?.innerText || '';
+                                var article = document.querySelector('article, main, [role="main"], .post-content, .article-body, .entry-content');
+                                var text = '';
+                                if (article) {
+                                    text = article.innerText;
+                                } else {
+                                    var paragraphs = Array.from(document.querySelectorAll('p'))
+                                        .map(function(p) { return p.innerText.trim(); })
+                                        .filter(function(t) { return t.length > 25; });
+                                    text = paragraphs.join('\n\n');
+                                }
+                                if (!text || text.length < 50) {
+                                    text = document.body ? document.body.innerText : '';
+                                }
+                                return JSON.stringify({
+                                    title: title.trim(),
+                                    byline: byline.trim(),
+                                    text: text.substring(0, 50000).trim()
+                                });
+                            } catch (e) {
+                                return JSON.stringify({ title: document.title, byline: '', text: '' });
+                            }
+                        })();
+                    """.trimIndent()
+                    webView.evaluateJavascript(script) { result ->
+                        try {
+                            val parsedJson = if (result != null && result.startsWith("\"") && result.endsWith("\"")) {
+                                org.json.JSONObject(org.json.JSONTokener(result).nextValue().toString())
+                            } else if (result != null && result != "null") {
+                                org.json.JSONObject(result)
+                            } else null
+
+                            if (parsedJson != null) {
+                                val currentTitle = webView.title ?: ""
+                                val title = parsedJson.optString("title", currentTitle)
+                                val byline = parsedJson.optString("byline", "")
+                                val text = parsedJson.optString("text", "")
+                                val words = text.split(Regex("\\s+")).filter { it.isNotBlank() }.size
+                                val minutes = (words / 200).coerceAtLeast(1)
+                                val article = com.example.browser.ReaderArticle(
+                                    title = if (title.isNotBlank()) title else currentTitle,
+                                    byline = byline,
+                                    domain = com.example.browser.UrlUtils.extractDomain(webView.url ?: ""),
+                                    contentText = text,
+                                    wordCount = words,
+                                    readingTimeMinutes = minutes
+                                )
+                                action.callback(article)
+                            } else {
+                                action.callback(null)
+                            }
+                        } catch (e: Exception) {
+                            action.callback(null)
+                        }
+                    }
                 }
             }
         }
@@ -306,6 +368,7 @@ fun WebViewContainer(
                 factory = { ctx ->
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
                         isNestedScrollingEnabled = true
+                        visibility = if (isActive) View.VISIBLE else View.GONE
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -334,11 +397,12 @@ fun WebViewContainer(
                         val initialBgColor = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
                         setBackgroundColor(initialBgColor)
 
-                        // In virtualized environments or fallback crashes, ensure rendering stability
-                        if (renderCrashCount > 0) {
+                        // Use software layer on emulators without host DRM rendernode (/dev/dri/renderD*)
+                        // or after a render process crash to avoid Mesa EGL failures.
+                        if (com.example.browser.DeviceUtils.isEmulator || renderCrashCount > 0) {
                             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                         } else {
-                            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                            setLayerType(View.LAYER_TYPE_NONE, null)
                         }
 
                         // High refresh rate (90Hz/120Hz) nested scrolling optimization
@@ -466,11 +530,9 @@ fun WebViewContainer(
                             WebSettingsCompat.setAlgorithmicDarkeningAllowed(settings, effectiveDark)
                         }
 
-                        // Find in page listener
-                        setFindListener { activeMatchOrdinal, numberOfMatches, isDoneCounting ->
-                            if (isDoneCounting) {
-                                viewModel.onFindMatchResult(activeMatchOrdinal, numberOfMatches)
-                            }
+                        // Find in page listener: update match index and count on every search & navigation step
+                        setFindListener { activeMatchOrdinal, numberOfMatches, _ ->
+                            viewModel.onFindMatchResult(activeMatchOrdinal, numberOfMatches)
                         }
 
                         // Download Listener
@@ -841,6 +903,7 @@ fun WebViewContainer(
                 },
                 update = { swipeRefresh ->
                     swipeRefreshRef = swipeRefresh
+                    swipeRefresh.visibility = if (isActive) View.VISIBLE else View.GONE
                     val webView = (0 until swipeRefresh.childCount)
                         .map { swipeRefresh.getChildAt(it) }
                         .filterIsInstance<PersistentWebView>()

@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -42,6 +41,11 @@ fun BrowserScreen(
     val findQuery by viewModel.findQuery.collectAsStateWithLifecycle()
     val isBarsVisible by viewModel.isBarsVisible.collectAsStateWithLifecycle()
     val contextMenuData by viewModel.contextMenuData.collectAsStateWithLifecycle()
+    val toolbarPosition by viewModel.toolbarPosition.collectAsStateWithLifecycle()
+    val readerArticle by viewModel.readerArticle.collectAsStateWithLifecycle()
+    val readerTheme by viewModel.readerTheme.collectAsStateWithLifecycle()
+    val readerFontSize by viewModel.readerFontSize.collectAsStateWithLifecycle()
+    val readerIsSerif by viewModel.readerIsSerif.collectAsStateWithLifecycle()
     var isAddressBarEditing by remember { mutableStateOf(false) }
 
     // Settings
@@ -98,50 +102,91 @@ fun BrowserScreen(
 
         Scaffold(
             topBar = {
-                AnimatedVisibility(
-                    visible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing,
-                    enter = slideInVertically(
-                        initialOffsetY = { -it },
-                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                    ),
-                    exit = slideOutVertically(
-                        targetOffsetY = { -it },
-                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
-                    )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
                 ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surface,
-                        tonalElevation = 0.dp,
-                        shadowElevation = 0.dp,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.statusBars)
-                        ) {
-                            // Top URL Bar
-                            AddressBar(
-                                activeTab = activeTabState,
-                                currentProfile = currentProfile,
-                                isPrivateMode = isPrivateMode,
-                                tabCount = currentTabs.size,
-                                isBookmarked = isBookmarked,
-                                onEditingChanged = { isAddressBarEditing = it },
-                                onNavigate = {
-                                    focusManager.clearFocus(force = true)
-                                    viewModel.navigateTo(it)
-                                },
-                                onReload = { viewModel.reload() },
-                                onStop = { viewModel.stopLoading() },
-                                onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
-                                onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                                onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                                onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
-                                onOpenMenu = { showMenuSheet = true }
-                            )
+                    // Persistent Status Bar protection area: Keeps phone status bar visible at all times
+                    Spacer(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .windowInsetsTopHeight(WindowInsets.statusBars)
+                    )
 
-                            if (isFindInPageActive) {
+                    if (toolbarPosition == ToolbarPosition.TOP) {
+                        AnimatedVisibility(
+                            visible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing,
+                            enter = slideInVertically(
+                                initialOffsetY = { -it },
+                                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                            ),
+                            exit = slideOutVertically(
+                                targetOffsetY = { -it },
+                                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                            )
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 2.dp,
+                                shadowElevation = 3.dp,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                if (isFindInPageActive) {
+                                    FindInPageBar(
+                                        query = findQuery,
+                                        matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
+                                        matchTotal = activeTabState?.searchMatchCount ?: 0,
+                                        onQueryChange = { viewModel.setFindQuery(it) },
+                                        onFindNext = { forward -> viewModel.findNext(forward) },
+                                        onClose = { viewModel.closeFindInPage() }
+                                    )
+                                } else {
+                                    // Top URL Bar
+                                    AddressBar(
+                                        activeTab = activeTabState,
+                                        currentProfile = currentProfile,
+                                        isPrivateMode = isPrivateMode,
+                                        tabCount = currentTabs.size,
+                                        isBookmarked = isBookmarked,
+                                        isBottomPosition = false,
+                                        onOpenReaderMode = { viewModel.openReaderMode() },
+                                        onEditingChanged = { isAddressBarEditing = it },
+                                        onNavigate = {
+                                            focusManager.clearFocus(force = true)
+                                            viewModel.navigateTo(it)
+                                        },
+                                        onReload = { viewModel.reload() },
+                                        onStop = { viewModel.stopLoading() },
+                                        onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
+                                        onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                                        onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                                        onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                                        onOpenMenu = { showMenuSheet = true },
+                                        onGoHome = { viewModel.goHome() }
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        // Bottom toolbar mode: topBar hosts status bar, plus FindInPage if active
+                        AnimatedVisibility(
+                            visible = isFindInPageActive,
+                            enter = slideInVertically(
+                                initialOffsetY = { -it },
+                                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                            ),
+                            exit = slideOutVertically(
+                                targetOffsetY = { -it },
+                                animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
+                            )
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.surface,
+                                tonalElevation = 2.dp,
+                                shadowElevation = 3.dp,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 FindInPageBar(
                                     query = findQuery,
                                     matchCurrent = activeTabState?.searchMatchCurrent ?: 0,
@@ -157,7 +202,7 @@ fun BrowserScreen(
             },
             bottomBar = {
                 AnimatedVisibility(
-                    visible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing,
+                    visible = !isFindInPageActive && (isBarsVisible || isHome || isAddressBarEditing),
                     enter = slideInVertically(
                         initialOffsetY = { it },
                         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
@@ -167,17 +212,49 @@ fun BrowserScreen(
                         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
                     )
                 ) {
-                    BrowserBottomBar(
-                        canGoBack = activeTabState?.canGoBack == true,
-                        canGoForward = activeTabState?.canGoForward == true,
-                        tabCount = currentTabs.size,
-                        isPrivateMode = isPrivateMode,
-                        onGoBack = { viewModel.goBack() },
-                        onGoForward = { viewModel.goForward() },
-                        onGoHome = { viewModel.goHome() },
-                        onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                        onOpenMenu = { showMenuSheet = true }
-                    )
+                    if (toolbarPosition == ToolbarPosition.BOTTOM) {
+                        UnifiedBottomCommandBar(
+                            activeTab = activeTabState,
+                            currentProfile = currentProfile,
+                            isPrivateMode = isPrivateMode,
+                            tabCount = currentTabs.size,
+                            canGoBack = activeTabState?.canGoBack == true,
+                            canGoForward = activeTabState?.canGoForward == true,
+                            isBookmarked = isBookmarked,
+                            onGoBack = { viewModel.goBack() },
+                            onGoForward = { viewModel.goForward() },
+                            onGoHome = { viewModel.goHome() },
+                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                            onOpenMenu = { showMenuSheet = true },
+                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onNavigate = {
+                                focusManager.clearFocus(force = true)
+                                viewModel.navigateTo(it)
+                            },
+                            onReload = { viewModel.reload() },
+                            onStop = { viewModel.stopLoading() },
+                            onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
+                            onEditingChanged = { isAddressBarEditing = it },
+                            onOpenReaderMode = { viewModel.openReaderMode() }
+                        )
+                    } else {
+                        BrowserBottomBar(
+                            canGoBack = activeTabState?.canGoBack == true,
+                            canGoForward = activeTabState?.canGoForward == true,
+                            tabCount = currentTabs.size,
+                            isPrivateMode = isPrivateMode,
+                            currentProfile = currentProfile,
+                            onGoBack = { viewModel.goBack() },
+                            onGoForward = { viewModel.goForward() },
+                            onGoHome = { viewModel.goHome() },
+                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
+                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onNextProfile = { viewModel.switchToNextProfile() },
+                            onPrevProfile = { viewModel.switchToPrevProfile() },
+                            onOpenMenu = { showMenuSheet = true }
+                        )
+                    }
                 }
             },
             contentWindowInsets = WindowInsets(0, 0, 0, 0),
@@ -206,41 +283,53 @@ fun BrowserScreen(
                 map.values.toList()
             }
 
+            // Decouple WebView container padding from dynamic bottom bar hide/show animation
+            // to completely eliminate Chromium viewport relayout jitter when reversing scroll direction
+            // Status bar protection area is always preserved at the top of the viewport
+            val effectiveTopPadding = innerPadding.calculateTopPadding()
+
+            val effectiveBottomPadding = if (isHome) {
+                innerPadding.calculateBottomPadding()
+            } else {
+                0.dp
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
+                    .padding(top = effectiveTopPadding, bottom = effectiveBottomPadding)
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                // Persistent WebViews for all open tabs to keep background playback and prevent reloads
+                // Persistent WebViews for open tabs to keep background playback and prevent reloads
                 for (tab in openTabs) {
-                    key(tab.id) {
-                        val isActive = (tab.id == activeTabId && !isHome)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .zIndex(if (isActive) 1f else 0f)
-                                .graphicsLayer {
-                                    alpha = if (isActive) 1f else 0f
-                                }
-                                .then(
-                                    if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
+                    val hasLoadedUrl = tab.url.isNotBlank() && tab.url != "about:blank"
+                    val isActive = (tab.id == activeTabId && !isHome)
+                    if (hasLoadedUrl || isActive) {
+                        key(tab.id) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .zIndex(if (isActive) 1f else 0f)
+                                    .then(
+                                        if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
+                                    )
+                            ) {
+                                WebViewContainer(
+                                    tabId = tab.id,
+                                    initialUrl = tab.url,
+                                    isDesktopMode = tab.isDesktopMode,
+                                    isAdBlockEnabled = isAdBlockEnabled,
+                                    whitelistedDomains = whitelistedDomains,
+                                    blockThirdPartyCookies = blockThirdPartyCookies,
+                                    enableWebDarkMode = enableWebDarkMode,
+                                    enableBackgroundPlay = enableBackgroundPlay,
+                                    isDarkTheme = isDarkTheme,
+                                    currentProfile = currentProfile,
+                                    viewModel = viewModel,
+                                    actions = viewModel.webViewActionEvent,
+                                    isActive = isActive
                                 )
-                        ) {
-                            WebViewContainer(
-                                tabId = tab.id,
-                                initialUrl = tab.url,
-                                isDesktopMode = tab.isDesktopMode,
-                                isAdBlockEnabled = isAdBlockEnabled,
-                                whitelistedDomains = whitelistedDomains,
-                                blockThirdPartyCookies = blockThirdPartyCookies,
-                                enableWebDarkMode = enableWebDarkMode,
-                                enableBackgroundPlay = enableBackgroundPlay,
-                                isDarkTheme = isDarkTheme,
-                                currentProfile = currentProfile,
-                                viewModel = viewModel,
-                                actions = viewModel.webViewActionEvent
-                            )
+                            }
                         }
                     }
                 }
@@ -268,7 +357,10 @@ fun BrowserScreen(
                             onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
                             onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
                             onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) }
+                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                            onOpenBookmarks = { viewModel.openSheet(ActiveSheet.BOOKMARKS) },
+                            onOpenHistory = { viewModel.openSheet(ActiveSheet.HISTORY) },
+                            onOpenDownloads = { viewModel.openSheet(ActiveSheet.DOWNLOADS) }
                         )
                     }
                 }
@@ -289,6 +381,8 @@ fun BrowserScreen(
                 activeTabId = activeTabState?.id ?: "",
                 currentProfile = currentProfile,
                 isPrivateMode = isPrivateMode,
+                profiles = profiles,
+                onSelectProfile = { viewModel.switchProfile(it) },
                 onSelectTab = { viewModel.selectTab(it) },
                 onCloseTab = { viewModel.closeTab(it) },
                 onNewTab = { viewModel.createNewTab() },
@@ -316,6 +410,8 @@ fun BrowserScreen(
                 onToggleMaterialYou = { viewModel.setUseMaterialYou(it) },
                 newTabStyle = newTabStyle,
                 onNewTabStyleChange = { viewModel.setNewTabStyle(it) },
+                toolbarPosition = toolbarPosition,
+                onToolbarPositionChange = { viewModel.setToolbarPosition(it) },
                 isWeatherEnabled = isWeatherEnabled,
                 onToggleWeather = { viewModel.setWeatherOnNewTab(it) },
                 isWeatherFahrenheit = isWeatherFahrenheit,
@@ -401,6 +497,27 @@ fun BrowserScreen(
                 downloads = downloads,
                 onOpenFile = { viewModel.openDownloadedFile(it) },
                 onDeleteDownload = { viewModel.deleteDownloadItem(it) },
+                onDismiss = { viewModel.dismissSheet() },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        AnimatedVisibility(
+            visible = activeSheet == ActiveSheet.READER_MODE,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(250)) { it / 4 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(200)) { it / 4 }
+        ) {
+            BackHandler(enabled = true) {
+                viewModel.dismissSheet()
+            }
+            ReaderModeSheet(
+                article = readerArticle,
+                theme = readerTheme,
+                fontSize = readerFontSize,
+                isSerif = readerIsSerif,
+                onThemeChange = { viewModel.setReaderTheme(it) },
+                onFontSizeChange = { viewModel.setReaderFontSize(it) },
+                onSerifChange = { viewModel.setReaderIsSerif(it) },
                 onDismiss = { viewModel.dismissSheet() },
                 modifier = Modifier.fillMaxSize()
             )
@@ -498,6 +615,7 @@ fun BrowserScreen(
             onNewTab = { viewModel.createNewTab() },
             onNewPrivateTab = { viewModel.togglePrivateMode() },
             onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+            onOpenReaderMode = { viewModel.openReaderMode() },
             onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
             onOpenBookmarks = { viewModel.openSheet(ActiveSheet.BOOKMARKS) },
             onOpenHistory = { viewModel.openSheet(ActiveSheet.HISTORY) },

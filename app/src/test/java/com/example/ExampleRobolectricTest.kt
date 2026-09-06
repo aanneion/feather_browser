@@ -18,4 +18,16 @@ class ExampleRobolectricTest {
     val appName = context.getString(R.string.app_name)
     assertEquals("Feather", appName)
   }
+
+  @Test
+  fun `goHome navigates to blank page`() {
+    val application = ApplicationProvider.getApplicationContext<android.app.Application>()
+    val viewModel = com.example.browser.BrowserViewModel(application)
+
+    viewModel.navigateTo("https://example.com")
+    assertEquals("https://example.com", viewModel.activeTabState.value?.url)
+
+    viewModel.goHome()
+    assertEquals("", viewModel.activeTabState.value?.url)
+  }
 }

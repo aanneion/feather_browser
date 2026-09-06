@@ -34,6 +34,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initializeWebViewDirectories()
         enableEdgeToEdge()
         enableHighRefreshRate()
 
@@ -66,12 +67,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun enableHighRefreshRate() {
+    private fun initializeWebViewDirectories() {
         try {
-            window.setFlags(
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
-            )
+            val cacheDir = applicationContext.cacheDir
+            val webViewCache = java.io.File(cacheDir, "WebView/Default/HTTP Cache")
+            val codeCacheJs = java.io.File(webViewCache, "Code Cache/js")
+            val codeCacheWasm = java.io.File(webViewCache, "Code Cache/wasm")
+            val indexDir = java.io.File(webViewCache, "index-dir")
+            codeCacheJs.mkdirs()
+            codeCacheWasm.mkdirs()
+            indexDir.mkdirs()
+        } catch (e: Throwable) {
+            // Safe fallback
+        }
+    }
+
+    private fun enableHighRefreshRate() {
+        if (com.example.browser.DeviceUtils.isEmulator) return
+        try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val currentDisplay = display
                 val modes = currentDisplay?.supportedModes

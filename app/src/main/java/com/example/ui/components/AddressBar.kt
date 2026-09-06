@@ -30,6 +30,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
@@ -66,6 +68,9 @@ fun AddressBar(
     onOpenPrivacyShield: () -> Unit,
     onOpenMenu: () -> Unit,
     onEditingChanged: ((Boolean) -> Unit)? = null,
+    isBottomPosition: Boolean = false,
+    onOpenReaderMode: (() -> Unit)? = null,
+    onGoHome: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var isEditing by remember { mutableStateOf(false) }
@@ -179,7 +184,26 @@ fun AddressBar(
                     )
                 }
 
-                Spacer(modifier = Modifier.width(6.dp))
+                if (onGoHome != null) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    IconButton(
+                        onClick = onGoHome,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .focusProperties { canFocus = false }
+                            .testTag("top_home_button")
+                    ) {
+                        val isAtHome = activeTab?.url.isNullOrBlank() || activeTab?.url == "about:blank"
+                        Icon(
+                            imageVector = Icons.Default.Home,
+                            contentDescription = "Home",
+                            tint = if (isAtHome) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(4.dp))
 
                 // Address / Search Bar Input Field with depth
                 Surface(
@@ -377,6 +401,24 @@ fun AddressBar(
                 if (!isEditing) {
                     Spacer(modifier = Modifier.width(4.dp))
 
+                    // Reader Mode action icon button on web pages
+                    if (hasValidUrl && onOpenReaderMode != null) {
+                        IconButton(
+                            onClick = onOpenReaderMode,
+                            modifier = Modifier
+                                .size(36.dp)
+                                .focusProperties { canFocus = false }
+                                .testTag("reader_mode_top_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ChromeReaderMode,
+                                contentDescription = "Reader Mode",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
                     // Quick Reload or Bookmark on Top Bar
                     if (hasValidUrl) {
                         IconButton(
@@ -433,17 +475,26 @@ fun AddressBar(
             // Real-Time Google Search Suggestions Dropdown
             val trimmedQuery = inputText.trim()
             val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
-                (suggestions.isNotEmpty() || isLoadingSuggestions)
+                (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
+
+            val density = LocalDensity.current
+            val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
+            val imeBottomDp = with(density) { WindowInsets.ime.getBottom(density).toDp() }
+            val statusBarTopDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+            val navBarBottomDp = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+            val bottomInsetDp = maxOf(imeBottomDp, navBarBottomDp)
+            val availableDropdownHeight = (screenHeightDp - bottomInsetDp - statusBarTopDp - 72.dp)
+                .coerceIn(120.dp, 360.dp)
 
             AnimatedVisibility(
                 visible = shouldShowSuggestions,
                 enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(150)) +
                         expandVertically(animationSpec = androidx.compose.animation.core.tween(200)),
                 exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(100)) +
-                       shrinkVertically(animationSpec = androidx.compose.animation.core.tween(150))
+                        shrinkVertically(animationSpec = androidx.compose.animation.core.tween(150))
             ) {
                 Surface(
-                    shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
+                    shape = if (isBottomPosition) RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) else RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
                     color = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp),
                     tonalElevation = 3.dp,
                     shadowElevation = 6.dp,
@@ -503,7 +554,7 @@ fun AddressBar(
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 280.dp)
+                                .heightIn(max = availableDropdownHeight)
                         ) {
                             // If user typed a direct URL, provide direct navigation option
                             if (looksLikeUrl) {

@@ -25,6 +25,20 @@ class BrowserPreferences(context: Context) {
         private const val KEY_DOWNLOAD_PROVIDER = "pref_download_provider"
         private const val KEY_WEATHER_ON_NEW_TAB = "pref_weather_on_new_tab"
         private const val KEY_WEATHER_FAHRENHEIT = "pref_weather_fahrenheit"
+        private const val KEY_TOOLBAR_POSITION = "pref_toolbar_position"
+    }
+
+    fun getToolbarPosition(): com.example.browser.ToolbarPosition {
+        val name = prefs.getString(KEY_TOOLBAR_POSITION, com.example.browser.ToolbarPosition.BOTTOM.name)
+        return try {
+            com.example.browser.ToolbarPosition.valueOf(name ?: com.example.browser.ToolbarPosition.BOTTOM.name)
+        } catch (e: Exception) {
+            com.example.browser.ToolbarPosition.BOTTOM
+        }
+    }
+
+    fun setToolbarPosition(pos: com.example.browser.ToolbarPosition) {
+        prefs.edit().putString(KEY_TOOLBAR_POSITION, pos.name).apply()
     }
 
     fun isWeatherOnNewTab(): Boolean {

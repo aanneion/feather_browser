@@ -101,7 +101,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val now = System.currentTimeMillis()
 
         // When near page top, always smoothly restore bars
-        if (scrollY <= 40) {
+        if (scrollY <= 35) {
             accumulatedScrollY = 0
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
@@ -110,29 +110,25 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        // Reduced cooldown (150ms) to ensure swift responsiveness without toggle jitter
-        if (now - lastVisibilityToggleTime < 150) {
-            accumulatedScrollY = 0
-            return
-        }
-
-        // Filter out microscopic finger tremors or resting hand jitter (< 3px)
+        // Filter out microscopic finger tremors (< 3px)
         if (kotlin.math.abs(deltaY) < 3) return
 
-        // Direction reversal reset
+        // Direction reversal: clean reset so sudden scroll direction changes respond immediately
         if ((deltaY > 0 && accumulatedScrollY < 0) || (deltaY < 0 && accumulatedScrollY > 0)) {
             accumulatedScrollY = 0
         }
         accumulatedScrollY += deltaY
 
         // Deliberate user scroll threshold to trigger hide or show
-        if (accumulatedScrollY > 55) {
-            if (_isBarsVisible.value) {
+        if (accumulatedScrollY > 60) {
+            // Scrolling down: hide bars with light debounce to prevent flapping
+            if (_isBarsVisible.value && now - lastVisibilityToggleTime > 120) {
                 _isBarsVisible.value = false
                 lastVisibilityToggleTime = now
             }
             accumulatedScrollY = 0
-        } else if (accumulatedScrollY < -30) {
+        } else if (accumulatedScrollY < -25) {
+            // Scrolling up: show bars promptly without artificial lag or dropped touch frames
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
                 lastVisibilityToggleTime = now
@@ -202,6 +198,59 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val downloadProvider = MutableStateFlow(preferences.getDownloadProvider())
     val isWeatherOnNewTab = MutableStateFlow(preferences.isWeatherOnNewTab())
     val isWeatherFahrenheit = MutableStateFlow(preferences.isWeatherFahrenheit())
+    val toolbarPosition = MutableStateFlow(preferences.getToolbarPosition())
+
+    // Reader Mode State
+    private val _readerArticle = MutableStateFlow<ReaderArticle?>(null)
+    val readerArticle: StateFlow<ReaderArticle?> = _readerArticle.asStateFlow()
+
+    private val _readerTheme = MutableStateFlow(ReaderTheme.SEPIA)
+    val readerTheme: StateFlow<ReaderTheme> = _readerTheme.asStateFlow()
+
+    private val _readerFontSize = MutableStateFlow(18)
+    val readerFontSize: StateFlow<Int> = _readerFontSize.asStateFlow()
+
+    private val _readerIsSerif = MutableStateFlow(true)
+    val readerIsSerif: StateFlow<Boolean> = _readerIsSerif.asStateFlow()
+
+    fun setToolbarPosition(position: ToolbarPosition) {
+        toolbarPosition.value = position
+        preferences.setToolbarPosition(position)
+    }
+
+    fun setReaderTheme(theme: ReaderTheme) { _readerTheme.value = theme }
+    fun setReaderFontSize(size: Int) { _readerFontSize.value = size.coerceIn(12, 28) }
+    fun setReaderIsSerif(isSerif: Boolean) { _readerIsSerif.value = isSerif }
+    fun setReaderArticle(article: ReaderArticle?) { _readerArticle.value = article }
+
+    fun openReaderMode() {
+        val tabId = _activeTabId.value
+        val currentTab = _activeTabState.value
+        if (tabId.isBlank() || currentTab == null || currentTab.url.isBlank() || currentTab.url == "about:blank") return
+
+        viewModelScope.launch {
+            _webViewActionEvent.emit(WebViewAction.ExtractReaderContent(
+                callback = { extracted ->
+                    if (extracted != null && extracted.contentText.isNotBlank()) {
+                        _readerArticle.value = extracted
+                        openSheet(ActiveSheet.READER_MODE)
+                    } else {
+                        // Fallback article if extraction returns sparse text
+                        val fallback = ReaderArticle(
+                            title = currentTab.title,
+                            domain = UrlUtils.extractDomain(currentTab.url),
+                            contentText = "Unable to extract formatted article content for this page. The page may not contain long-form text or may be an interactive web application.",
+                            wordCount = 25,
+                            readingTimeMinutes = 1
+                        )
+                        _readerArticle.value = fallback
+                        openSheet(ActiveSheet.READER_MODE)
+                    }
+                },
+                targetTabId = tabId
+            ))
+        }
+    }
 
     // Weather Repository & UI State Flow
     val weatherRepository = WeatherRepository(application)
@@ -452,6 +501,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         dismissSheet()
     }
 
+    fun switchToNextProfile() {
+        val list = profiles.value
+        if (list.size <= 1) return
+        val currentIndex = list.indexOfFirst { it.id == _currentProfileId.value }
+        val nextIndex = if (currentIndex >= 0) (currentIndex + 1) % list.size else 0
+        switchProfile(list[nextIndex].id)
+    }
+
+    fun switchToPrevProfile() {
+        val list = profiles.value
+        if (list.size <= 1) return
+        val currentIndex = list.indexOfFirst { it.id == _currentProfileId.value }
+        val prevIndex = if (currentIndex > 0) currentIndex - 1 else list.size - 1
+        switchProfile(list[prevIndex].id)
+    }
+
     fun togglePrivateMode() {
         val newPrivate = !_isPrivateMode.value
         _isPrivateMode.value = newPrivate
@@ -690,19 +755,41 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         setBarsVisible(true)
         _isFindInPageActive.value = true
         _findQuery.value = ""
+        _activeTabState.update {
+            it?.copy(
+                searchMatchCurrent = 0,
+                searchMatchCount = 0
+            )
+        }
     }
 
     fun closeFindInPage() {
         val tabId = _activeTabId.value
         _isFindInPageActive.value = false
         _findQuery.value = ""
+        _activeTabState.update {
+            it?.copy(
+                searchMatchCurrent = 0,
+                searchMatchCount = 0
+            )
+        }
         viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.ClearFindMatches(targetTabId = tabId)) }
     }
 
     fun setFindQuery(query: String) {
         val tabId = _activeTabId.value
         _findQuery.value = query
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindAllAsync(query, targetTabId = tabId)) }
+        if (query.isBlank()) {
+            _activeTabState.update {
+                it?.copy(
+                    searchMatchCurrent = 0,
+                    searchMatchCount = 0
+                )
+            }
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.ClearFindMatches(targetTabId = tabId)) }
+        } else {
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.FindAllAsync(query, targetTabId = tabId)) }
+        }
     }
 
     fun findNext(forward: Boolean) {
@@ -1034,4 +1121,8 @@ sealed class WebViewAction {
     data class FindAllAsync(val query: String, override val targetTabId: String? = null) : WebViewAction()
     data class FindNext(val forward: Boolean, override val targetTabId: String? = null) : WebViewAction()
     data class ClearFindMatches(override val targetTabId: String? = null) : WebViewAction()
+    data class ExtractReaderContent(
+        val callback: (ReaderArticle?) -> Unit,
+        override val targetTabId: String? = null
+    ) : WebViewAction()
 }

@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -44,6 +45,8 @@ fun SettingsScreen(
     onToggleMaterialYou: (Boolean) -> Unit,
     newTabStyle: NewTabStyle,
     onNewTabStyleChange: (NewTabStyle) -> Unit,
+    toolbarPosition: ToolbarPosition = ToolbarPosition.BOTTOM,
+    onToolbarPositionChange: (ToolbarPosition) -> Unit = {},
     isWeatherEnabled: Boolean = true,
     onToggleWeather: (Boolean) -> Unit = {},
     isWeatherFahrenheit: Boolean = false,
@@ -272,6 +275,65 @@ fun SettingsScreen(
                             Switch(
                                 checked = enableWebDarkMode,
                                 onCheckedChange = onToggleWebDarkMode
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)
+                    )
+
+                    Text(
+                        text = "Toolbar Position",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Choose between the compact floating command dock or classic top bar",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ToolbarPosition.entries.forEach { pos ->
+                            val isSelected = toolbarPosition == pos
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onToolbarPositionChange(pos) },
+                                shape = RoundedCornerShape(10.dp),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    enabled = true,
+                                    selected = isSelected,
+                                    borderColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f),
+                                    selectedBorderColor = MaterialTheme.colorScheme.primary,
+                                    borderWidth = 1.dp,
+                                    selectedBorderWidth = 1.5.dp
+                                ),
+                                colors = FilterChipDefaults.filterChipColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    labelColor = MaterialTheme.colorScheme.onSurface,
+                                    selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                ),
+                                label = {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = pos.displayName,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
@@ -677,7 +739,7 @@ fun SettingsScreen(
 }
 
 /**
- * Premium Glassmorphic Card Container with frosted styling and subtle light-reflecting gradient borders.
+ * Elevated Settings Card Container with solid surface, crisp borders, and soft ambient shadow for pristine light mode distinction.
  */
 @Composable
 private fun GlassySettingsCard(
@@ -692,46 +754,45 @@ private fun GlassySettingsCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(22.dp)
+                    .size(24.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(13.dp)
+                    modifier = Modifier.size(14.dp)
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = title,
-                fontSize = 11.5.sp,
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp,
+                letterSpacing = 0.9.sp,
                 color = MaterialTheme.colorScheme.primary
-            )
-        }
-
-        val outlineVariant = MaterialTheme.colorScheme.outlineVariant
-        val borderBrush = remember(outlineVariant) {
-            Brush.verticalGradient(
-                colors = listOf(
-                    outlineVariant.copy(alpha = 0.45f),
-                    outlineVariant.copy(alpha = 0.12f)
-                )
             )
         }
 
         Surface(
             shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 2.dp,
+            shadowElevation = 3.dp,
             border = BorderStroke(
                 width = 1.dp,
-                brush = borderBrush
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)
             ),
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(18.dp),
+                    ambientColor = Color(0x1F000000),
+                    spotColor = Color(0x26000000)
+                )
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
