@@ -26,7 +26,7 @@ By participating in this project, you agree to abide by our [Code of Conduct](CO
 ## How Can I Contribute?
 
 ### Reporting Bugs
-- Search existing [GitHub Issues](https://github.com/aanneion/lightweight_browser/issues) to verify if the bug has already been reported.
+- Search existing [GitHub Issues](https://github.com/aanneion/feather_browser/issues) to verify if the bug has already been reported.
 - If not, open a new issue using the **Bug Report** template.
 - Include device specifications (Android version, device model), steps to reproduce, and screenshots or logcat traces if applicable.
 

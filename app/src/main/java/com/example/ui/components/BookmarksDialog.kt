@@ -1,5 +1,8 @@
 package com.example.ui.components
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -30,14 +34,52 @@ fun BookmarksScreen(
     profileName: String,
     onNavigate: (String) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit,
+    onExportBookmarks: () -> String = { "" },
+    onImportBookmarks: (String) -> Unit = {},
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
     val filteredBookmarks = remember(bookmarks, searchQuery) {
         if (searchQuery.isBlank()) bookmarks
         else bookmarks.filter {
             it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+        }
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/html")
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val content = onExportBookmarks()
+                context.contentResolver.openOutputStream(uri)?.use { os ->
+                    os.write(content.toByteArray(Charsets.UTF_8))
+                }
+                Toast.makeText(context, "Exported ${bookmarks.size} bookmarks successfully", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Export failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val content = context.contentResolver.openInputStream(uri)?.use { stream ->
+                    stream.bufferedReader(Charsets.UTF_8).readText()
+                } ?: ""
+                if (content.isNotBlank()) {
+                    onImportBookmarks(content)
+                } else {
+                    Toast.makeText(context, "Selected file is empty", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Import failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -78,6 +120,33 @@ fun BookmarksScreen(
                                 text = "$profileName profile (${bookmarks.size} saved)",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                importLauncher.launch(arrayOf("text/html", "application/json", "text/plain", "*/*"))
+                            },
+                            modifier = Modifier.testTag("import_bookmarks_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FileDownload,
+                                contentDescription = "Import Bookmarks",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                val safeProfile = profileName.lowercase().replace(Regex("[^a-z0-9_]"), "_")
+                                exportLauncher.launch("feather_bookmarks_${safeProfile}.html")
+                            },
+                            modifier = Modifier.testTag("export_bookmarks_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.FileUpload,
+                                contentDescription = "Export Bookmarks",
+                                tint = MaterialTheme.colorScheme.primary
                             )
                         }
                     }

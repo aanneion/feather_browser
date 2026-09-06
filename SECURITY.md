@@ -16,7 +16,7 @@ Security and privacy are the highest priorities for Feather Browser.
 If you discover a security vulnerability or privacy leak within this repository, please do **NOT** open a public issue.
 
 Instead, please report it responsibly by:
-1. Opening a **Draft Security Advisory** on GitHub via [Security Advisories](https://github.com/aanneion/lightweight_browser/security/advisories/new) (preferred).
+1. Opening a **Draft Security Advisory** on GitHub via [Security Advisories](https://github.com/aanneion/feather_browser/security/advisories/new) (preferred).
 2. Or contacting the repository maintainer directly through GitHub.
 
 ### What to include in your report

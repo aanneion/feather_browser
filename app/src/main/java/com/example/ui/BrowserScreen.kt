@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -101,15 +102,11 @@ fun BrowserScreen(
                     visible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing,
                     enter = slideInVertically(
                         initialOffsetY = { -it },
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                    ) + expandVertically(
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
                     ),
                     exit = slideOutVertically(
                         targetOffsetY = { -it },
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                    ) + shrinkVertically(
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
                     )
                 ) {
                     Surface(
@@ -163,15 +160,11 @@ fun BrowserScreen(
                     visible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing,
                     enter = slideInVertically(
                         initialOffsetY = { it },
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                    ) + expandVertically(
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
                     ),
                     exit = slideOutVertically(
                         targetOffsetY = { it },
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
-                    ) + shrinkVertically(
-                        animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+                        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing)
                     )
                 ) {
                     BrowserBottomBar(
@@ -361,6 +354,14 @@ fun BrowserScreen(
                     viewModel.dismissSheet()
                 },
                 onDeleteBookmark = { viewModel.deleteBookmark(it) },
+                onExportBookmarks = {
+                    viewModel.exportBookmarksHtml(currentProfile?.displayName ?: "Feather")
+                },
+                onImportBookmarks = { content ->
+                    viewModel.importBookmarks(content) { count ->
+                        Toast.makeText(context, "Imported $count bookmarks successfully", Toast.LENGTH_SHORT).show()
+                    }
+                },
                 onDismiss = { viewModel.dismissSheet() },
                 modifier = Modifier.fillMaxSize()
             )

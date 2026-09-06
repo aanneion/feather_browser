@@ -13,6 +13,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.BrowserPreferences
+import com.example.data.BookmarkExportHelper
 import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
@@ -100,7 +101,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val now = System.currentTimeMillis()
 
         // When near page top, always smoothly restore bars
-        if (scrollY <= 32) {
+        if (scrollY <= 40) {
             accumulatedScrollY = 0
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
@@ -109,8 +110,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             return
         }
 
-        // Enforce cooldown so bars don't oscillate during or right after animations
-        if (now - lastVisibilityToggleTime < 400) {
+        // Reduced cooldown (150ms) to ensure swift responsiveness without toggle jitter
+        if (now - lastVisibilityToggleTime < 150) {
             accumulatedScrollY = 0
             return
         }
@@ -125,13 +126,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         accumulatedScrollY += deltaY
 
         // Deliberate user scroll threshold to trigger hide or show
-        if (accumulatedScrollY > 70) {
+        if (accumulatedScrollY > 55) {
             if (_isBarsVisible.value) {
                 _isBarsVisible.value = false
                 lastVisibilityToggleTime = now
             }
             accumulatedScrollY = 0
-        } else if (accumulatedScrollY < -60) {
+        } else if (accumulatedScrollY < -30) {
             if (!_isBarsVisible.value) {
                 _isBarsVisible.value = true
                 lastVisibilityToggleTime = now
@@ -876,6 +877,18 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun deleteBookmark(bookmark: Bookmark) {
         viewModelScope.launch {
             repository.deleteBookmark(bookmark)
+        }
+    }
+
+    fun exportBookmarksHtml(profileName: String = "Feather"): String {
+        return BookmarkExportHelper.exportToNetscapeHtml(bookmarks.value, profileName)
+    }
+
+    fun importBookmarks(rawContent: String, targetProfileId: String = _currentProfileId.value, onComplete: (Int) -> Unit) {
+        viewModelScope.launch {
+            val parsed = BookmarkExportHelper.parseBookmarks(rawContent, targetProfileId)
+            val count = repository.importBookmarks(parsed)
+            onComplete(count)
         }
     }
 

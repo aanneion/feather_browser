@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -67,6 +68,10 @@ class MainActivity : ComponentActivity() {
 
     private fun enableHighRefreshRate() {
         try {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            )
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val currentDisplay = display
                 val modes = currentDisplay?.supportedModes
@@ -85,6 +90,7 @@ class MainActivity : ComponentActivity() {
                 if (maxRefreshMode != null && maxRefreshMode.refreshRate > 60f) {
                     val params = window.attributes
                     params.preferredDisplayModeId = maxRefreshMode.modeId
+                    params.preferredRefreshRate = maxRefreshMode.refreshRate
                     window.attributes = params
                 }
             }

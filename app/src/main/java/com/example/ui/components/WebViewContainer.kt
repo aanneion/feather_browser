@@ -44,20 +44,12 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
-    private var isLayoutChanging = false
-
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
-        super.onSizeChanged(w, h, oldw, oldh)
-        if (oldh != 0 && oldh != h) {
-            isLayoutChanging = true
-            postDelayed({ isLayoutChanging = false }, 350)
-        }
-    }
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
-        if (!isLayoutChanging) {
-            onScrollChangedListener?.invoke(t - oldt, t)
+        val deltaY = t - oldt
+        if (deltaY != 0) {
+            onScrollChangedListener?.invoke(deltaY, t)
         }
     }
 
@@ -312,12 +304,6 @@ fun WebViewContainer(
         Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             AndroidView<SwipeRefreshLayout>(
                 factory = { ctx ->
-                    val uiMode = if (effectiveDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
-                    val config = Configuration(ctx.resources.configuration).apply {
-                        this.uiMode = (this.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or uiMode
-                    }
-                    val themedContext = ctx.createConfigurationContext(config)
-
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
                         isNestedScrollingEnabled = true
                         layoutParams = ViewGroup.LayoutParams(
@@ -330,12 +316,15 @@ fun WebViewContainer(
                         setProgressBackgroundColorSchemeColor(progressBgColor)
                     }
 
-                    val webView = PersistentWebView(themedContext).apply {
+                    val webView = PersistentWebView(ctx).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
+                        isFocusable = true
+                        isFocusableInTouchMode = true
                         onScrollChangedListener = { deltaY, scrollY ->
                             viewModel.onWebScroll(deltaY, scrollY)
+                            swipeRefresh.isEnabled = (scrollY <= 0 && !canScrollVertically(-1))
                         }
-                        addJavascriptInterface(FeatherMediaBridge(themedContext.applicationContext, tabId), "FeatherMediaBridge")
+                        addJavascriptInterface(FeatherMediaBridge(ctx.applicationContext, tabId), "FeatherMediaBridge")
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -408,14 +397,18 @@ fun WebViewContainer(
                             }
                         }
 
-                        // Default user agent capture
+                        // Default user agent capture - sanitize Version/4.0 and wv tags for Google sign-in compatibility
                         if (defaultUserAgent == null) {
-                            defaultUserAgent = settings.userAgentString
+                            val raw = settings.userAgentString
+                            defaultUserAgent = raw.replace("; wv", "")
+                                .replace("; wv;", ";")
+                                .replace("Version/4.0 ", "")
                         }
 
                         // Configure Settings
                         settings.apply {
                             javaScriptEnabled = true
+                            javaScriptCanOpenWindowsAutomatically = true
                             domStorageEnabled = true
                             databaseEnabled = true
                             useWideViewPort = true
@@ -425,7 +418,7 @@ fun WebViewContainer(
                             displayZoomControls = false
                             allowFileAccess = false
                             allowContentAccess = false
-                            setSupportMultipleWindows(false)
+                            setSupportMultipleWindows(true)
                             mediaPlaybackRequiresUserGesture = false
                             cacheMode = WebSettings.LOAD_DEFAULT
 
@@ -720,6 +713,79 @@ fun WebViewContainer(
 
                         // Custom WebChromeClient
                         webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: Message?
+                            ): Boolean {
+                                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                                val popupWebView = WebView(view?.context ?: ctx).apply {
+                                    webViewClient = object : WebViewClient() {
+                                        override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                            val targetUrl = request?.url?.toString() ?: return false
+                                            viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
+                                            return true
+                                        }
+                                        @Deprecated("Deprecated in Java")
+                                        override fun shouldOverrideUrlLoading(v: WebView?, targetUrl: String?): Boolean {
+                                            if (!targetUrl.isNullOrBlank()) {
+                                                viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
+                                            }
+                                            return true
+                                        }
+                                    }
+                                }
+                                transport.webView = popupWebView
+                                resultMsg.sendToTarget()
+                                return true
+                            }
+
+                            override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                try {
+                                    android.app.AlertDialog.Builder(ctx)
+                                        .setMessage(message ?: "")
+                                        .setPositiveButton(android.R.string.ok) { _, _ -> result?.confirm() }
+                                        .setOnCancelListener { result?.cancel() }
+                                        .show()
+                                } catch (e: Exception) {
+                                    result?.confirm()
+                                }
+                                return true
+                            }
+
+                            override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                try {
+                                    android.app.AlertDialog.Builder(ctx)
+                                        .setMessage(message ?: "")
+                                        .setPositiveButton(android.R.string.ok) { _, _ -> result?.confirm() }
+                                        .setNegativeButton(android.R.string.cancel) { _, _ -> result?.cancel() }
+                                        .setOnCancelListener { result?.cancel() }
+                                        .show()
+                                } catch (e: Exception) {
+                                    result?.cancel()
+                                }
+                                return true
+                            }
+
+                            override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult?): Boolean {
+                                try {
+                                    val input = android.widget.EditText(ctx).apply {
+                                        setText(defaultValue ?: "")
+                                    }
+                                    android.app.AlertDialog.Builder(ctx)
+                                        .setTitle(message ?: "")
+                                        .setView(input)
+                                        .setPositiveButton(android.R.string.ok) { _, _ -> result?.confirm(input.text.toString()) }
+                                        .setNegativeButton(android.R.string.cancel) { _, _ -> result?.cancel() }
+                                        .setOnCancelListener { result?.cancel() }
+                                        .show()
+                                } catch (e: Exception) {
+                                    result?.cancel()
+                                }
+                                return true
+                            }
+
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 super.onProgressChanged(view, newProgress)
                                 if (newProgress >= 100) {

@@ -196,6 +196,12 @@ class BrowserRepository(private val database: AppDatabase) {
         database.bookmarkDao().deleteBookmark(bookmark)
     }
 
+    suspend fun importBookmarks(bookmarks: List<Bookmark>): Int = withContext(Dispatchers.IO) {
+        if (bookmarks.isEmpty()) return@withContext 0
+        database.bookmarkDao().insertBookmarks(bookmarks)
+        bookmarks.size
+    }
+
     suspend fun isBookmarked(profileId: String, url: String): Boolean = withContext(Dispatchers.IO) {
         database.bookmarkDao().getBookmarkByUrl(profileId, url) != null
     }

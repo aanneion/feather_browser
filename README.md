@@ -6,9 +6,9 @@
   <strong>An ultra-lightweight (~1.5 MB), high-performance, privacy-first Android browser featuring true isolated multi-profiles with custom device fingerprint spoofing.</strong>
 </p>
 
-[![Releases](https://img.shields.io/badge/Releases-Latest%20APKs-2563EB?style=for-the-badge&logo=github)](https://github.com/aanneion/lightweight_browser/releases)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/aanneion/lightweight_browser/release.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/aanneion/lightweight_browser/actions)
-[![APK Size](https://img.shields.io/badge/APK_Size-~1.5_MB-10B981?style=for-the-badge&logo=android&logoColor=white)](https://github.com/aanneion/lightweight_browser/releases)
+[![Releases](https://img.shields.io/badge/Releases-Latest%20APKs-2563EB?style=for-the-badge&logo=github)](https://github.com/aanneion/feather_browser/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/aanneion/feather_browser/release.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/aanneion/feather_browser/actions)
+[![APK Size](https://img.shields.io/badge/APK_Size-~1.5_MB-10B981?style=for-the-badge&logo=android&logoColor=white)](https://github.com/aanneion/feather_browser/releases)
 [![Platform](https://img.shields.io/badge/Platform-Android_8.0+_(API_24+)-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://www.android.com/)
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.2-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose_M3-4285F4?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
@@ -129,8 +129,8 @@ graph TD
 ### Clone & Build
 ```bash
 # 1. Clone the repository
-git clone https://github.com/aanneion/lightweight_browser.git
-cd lightweight_browser
+git clone https://github.com/aanneion/feather_browser.git
+cd feather_browser
 
 # 2. Run Tests
 ./gradlew test
