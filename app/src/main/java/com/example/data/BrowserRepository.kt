@@ -152,6 +152,10 @@ class BrowserRepository(private val database: AppDatabase) {
     }
 
     // Tabs
+    suspend fun getTab(tabId: String): BrowserTab? = withContext(Dispatchers.IO) {
+        database.tabDao().getTabById(tabId)
+    }
+
     suspend fun saveTab(tab: BrowserTab) = withContext(Dispatchers.IO) {
         database.tabDao().insertTab(tab)
     }

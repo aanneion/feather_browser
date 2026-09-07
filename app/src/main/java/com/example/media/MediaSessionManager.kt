@@ -151,7 +151,13 @@ object MediaSessionManager {
 
     fun onMediaEnded(context: Context, tabId: String) {
         if (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null) {
-            stopPlayback(context)
+            scope.launch {
+                // Short grace period to allow YouTube playlist or next track autoplay to start seamlessly
+                kotlinx.coroutines.delay(1000)
+                if (!_isPlaying.value && (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null)) {
+                    stopPlayback(context)
+                }
+            }
         }
     }
 

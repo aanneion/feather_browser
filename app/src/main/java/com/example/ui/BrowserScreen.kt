@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -294,16 +295,30 @@ fun BrowserScreen(
                     .padding(top = effectiveTopPadding, bottom = effectiveBottomPadding)
                     .background(MaterialTheme.colorScheme.background)
             ) {
+                val loadedTabIds = remember { mutableStateMapOf<String, Boolean>() }
+                val openTabIdSet = remember(openTabs) { openTabs.map { it.id }.toSet() }
+                LaunchedEffect(openTabIdSet) {
+                    val toRemove = loadedTabIds.keys.filter { it !in openTabIdSet }
+                    toRemove.forEach { loadedTabIds.remove(it) }
+                }
+
                 // Persistent WebViews for open tabs to keep background playback and prevent reloads
                 for (tab in openTabs) {
-                    val hasLoadedUrl = tab.url.isNotBlank() && tab.url != "about:blank"
                     val isActive = (tab.id == activeTabId && !isHome)
-                    if (hasLoadedUrl || isActive) {
+                    val hasLoadedUrl = tab.url.isNotBlank() && tab.url != "about:blank"
+                    if (isActive || hasLoadedUrl) {
+                        loadedTabIds[tab.id] = true
+                    }
+                    val shouldRender = loadedTabIds[tab.id] == true || isActive
+                    if (shouldRender) {
                         key(tab.id) {
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .zIndex(if (isActive) 1f else 0f)
+                                    .graphicsLayer {
+                                        alpha = if (isActive) 1f else 0f
+                                    }
                                     .then(
                                         if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
                                     )

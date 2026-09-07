@@ -109,6 +109,36 @@ class PersistentWebView(context: Context) : WebView(context) {
         } catch (e: Throwable) { }
     }
 
+    override fun isShown(): Boolean {
+        return if (allowBackgroundPlayback) true else super.isShown()
+    }
+
+    override fun getVisibility(): Int {
+        return if (allowBackgroundPlayback) View.VISIBLE else super.getVisibility()
+    }
+
+    override fun getWindowVisibility(): Int {
+        return if (allowBackgroundPlayback) View.VISIBLE else super.getWindowVisibility()
+    }
+
+    override fun hasWindowFocus(): Boolean {
+        return if (allowBackgroundPlayback) true else super.hasWindowFocus()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
+            super.onWindowFocusChanged(effectiveFocus)
+        } catch (e: Throwable) { }
+    }
+
+    override fun dispatchWindowFocusChanged(hasFocus: Boolean) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else hasFocus
+            super.dispatchWindowFocusChanged(effectiveFocus)
+        } catch (e: Throwable) { }
+    }
+
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {
@@ -399,7 +429,8 @@ fun WebViewContainer(
                 factory = { ctx ->
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
                         isNestedScrollingEnabled = true
-                        visibility = if (isActive) View.VISIBLE else View.GONE
+                        visibility = View.VISIBLE
+                        isEnabled = (customVideoView == null) && isActive
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
@@ -934,7 +965,7 @@ fun WebViewContainer(
                 },
                 update = { swipeRefresh ->
                     swipeRefreshRef = swipeRefresh
-                    swipeRefresh.visibility = if (isActive) View.VISIBLE else View.GONE
+                    swipeRefresh.visibility = View.VISIBLE
                     val webView = (0 until swipeRefresh.childCount)
                         .map { swipeRefresh.getChildAt(it) }
                         .filterIsInstance<PersistentWebView>()
@@ -946,8 +977,8 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
 
-                    // Pull-to-refresh enabled unless custom video view is active
-                    swipeRefresh.isEnabled = (customVideoView == null)
+                    // Pull-to-refresh enabled unless custom video view is active, and only for active tab
+                    swipeRefresh.isEnabled = (customVideoView == null) && isActive
 
                     val primaryColor = if (effectiveDark) android.graphics.Color.parseColor("#80D8FF") else android.graphics.Color.parseColor("#00668B")
                     val progressBgColor = if (effectiveDark) android.graphics.Color.parseColor("#2C2C2C") else android.graphics.Color.WHITE

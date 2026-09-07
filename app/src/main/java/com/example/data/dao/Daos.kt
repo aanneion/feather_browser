@@ -24,6 +24,9 @@ interface ProfileDao {
 
 @Dao
 interface TabDao {
+    @Query("SELECT * FROM browser_tabs WHERE id = :tabId LIMIT 1")
+    suspend fun getTabById(tabId: String): BrowserTab?
+
     @Query("SELECT * FROM browser_tabs WHERE profileId = :profileId AND isPrivate = 0 ORDER BY lastAccessedAt DESC")
     fun getTabsForProfile(profileId: String): Flow<List<BrowserTab>>
 

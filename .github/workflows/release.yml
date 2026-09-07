@@ -92,7 +92,19 @@ jobs:
           VER="${{ steps.version_step.outputs.version }}"
           mkdir -p release-assets
           APK_NAME="Feather-Browser-${TAG}.apk"
-          cp app/build/outputs/apk/release/app-release.apk "release-assets/${APK_NAME}"
+          FOUND_APK=$(find app/build/outputs/apk/release -name "*.apk" 2>/dev/null | head -n 1)
+          if [ -z "$FOUND_APK" ]; then
+            FOUND_APK=$(find . -name "*release*.apk" 2>/dev/null | head -n 1)
+          fi
+          if [ -n "$FOUND_APK" ] && [ -f "$FOUND_APK" ]; then
+            cp "$FOUND_APK" "release-assets/${APK_NAME}"
+          elif [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk "release-assets/${APK_NAME}"
+          else
+            echo "Error: Release APK not found!"
+            find . -name "*.apk"
+            exit 1
+          fi
           cd release-assets
           sha256sum "${APK_NAME}" > "${APK_NAME}.sha256"
           echo "apk_name=${APK_NAME}" >> $GITHUB_OUTPUT

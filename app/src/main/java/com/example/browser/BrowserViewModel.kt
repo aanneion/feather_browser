@@ -20,10 +20,12 @@ import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
 import com.example.weather.WeatherRepository
 import com.example.weather.WeatherUiState
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class BrowserViewModel(application: Application) : AndroidViewModel(application) {
 
     private val context: Context get() = getApplication()
@@ -602,7 +604,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 isPrivate = isPrivate
             )
             repository.saveTab(newTab)
-            selectTab(tabId, autoDismiss = autoDismiss)
+            setBarsVisible(true)
+            _activeTabId.value = tabId
+            _activeTabState.value = ActiveTabState(
+                id = tabId,
+                profileId = profileId,
+                url = url,
+                title = if (url.isBlank()) "New Tab" else url,
+                isPrivate = isPrivate,
+                isDesktopMode = false,
+                blockedCount = 0
+            )
+            if (autoDismiss) {
+                dismissSheet()
+            }
         }
     }
 
@@ -873,7 +888,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         viewModelScope.launch {
-            val cur = currentTabs.value.find { it.id == tabId }
+            val cur = currentTabs.value.find { it.id == tabId } ?: repository.getTab(tabId)
             if (cur != null && cur.url != url) {
                 repository.saveTab(cur.copy(url = url, lastAccessedAt = System.currentTimeMillis()))
             }
@@ -889,7 +904,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         viewModelScope.launch {
-            val cur = currentTabs.value.find { it.id == tabId }
+            val cur = currentTabs.value.find { it.id == tabId } ?: repository.getTab(tabId)
             if (cur != null) {
                 if (cur.title != title) {
                     repository.saveTab(cur.copy(title = title))
