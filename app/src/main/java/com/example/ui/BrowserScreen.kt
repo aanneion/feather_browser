@@ -316,9 +316,6 @@ fun BrowserScreen(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .zIndex(if (isActive) 1f else 0f)
-                                    .graphicsLayer {
-                                        alpha = if (isActive) 1f else 0f
-                                    }
                                     .then(
                                         if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
                                     )

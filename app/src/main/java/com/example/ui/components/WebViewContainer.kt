@@ -121,24 +121,6 @@ class PersistentWebView(context: Context) : WebView(context) {
         return if (allowBackgroundPlayback) View.VISIBLE else super.getWindowVisibility()
     }
 
-    override fun hasWindowFocus(): Boolean {
-        return if (allowBackgroundPlayback) true else super.hasWindowFocus()
-    }
-
-    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
-            super.onWindowFocusChanged(effectiveFocus)
-        } catch (e: Throwable) { }
-    }
-
-    override fun dispatchWindowFocusChanged(hasFocus: Boolean) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else hasFocus
-            super.dispatchWindowFocusChanged(effectiveFocus)
-        } catch (e: Throwable) { }
-    }
-
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {
@@ -341,56 +323,6 @@ fun WebViewContainer(
                         } catch (e: Exception) {
                             action.callback(null)
                         }
-                    }
-                }
-            }
-        }
-    }
-
-    LaunchedEffect(tabId) {
-        MediaSessionManager.controlActions.collect { action ->
-            val playingTab = MediaSessionManager.activeMediaTabId.value
-            val isTargetTab = (playingTab == tabId) || (playingTab == null && viewModel.activeTabId.value == tabId)
-            if (isTargetTab) {
-                when (action) {
-                    MediaControlAction.PLAY -> {
-                        webViewRef?.evaluateJavascript(
-                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();",
-                            null
-                        )
-                    }
-                    MediaControlAction.PAUSE -> {
-                        webViewRef?.evaluateJavascript(
-                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();",
-                            null
-                        )
-                    }
-                    MediaControlAction.TOGGLE_PLAY_PAUSE -> {
-                        val isPlaying = MediaSessionManager.isPlaying.value
-                        val script = if (isPlaying) {
-                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
-                        } else {
-                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
-                        }
-                        webViewRef?.evaluateJavascript(script, null)
-                    }
-                    MediaControlAction.NEXT -> {
-                        webViewRef?.evaluateJavascript(
-                            "if (window.__feather_media_next) window.__feather_media_next();",
-                            null
-                        )
-                    }
-                    MediaControlAction.PREVIOUS -> {
-                        webViewRef?.evaluateJavascript(
-                            "if (window.__feather_media_prev) window.__feather_media_prev();",
-                            null
-                        )
-                    }
-                    MediaControlAction.STOP -> {
-                        webViewRef?.evaluateJavascript(
-                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();",
-                            null
-                        )
                     }
                 }
             }

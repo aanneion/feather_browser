@@ -228,10 +228,11 @@ class MediaPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val playPauseAction = if (isPlaying) ACTION_PAUSE else ACTION_PLAY
         val playPauseIntent = PendingIntent.getService(
             this,
             2,
-            Intent(this, MediaPlaybackService::class.java).apply { action = ACTION_TOGGLE },
+            Intent(this, MediaPlaybackService::class.java).apply { action = playPauseAction },
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
