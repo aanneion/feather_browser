@@ -76,8 +76,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     )
     val webViewActionEvent: SharedFlow<WebViewAction> = _webViewActionEvent.asSharedFlow()
 
-    // Reactive Total Blocked Items Flow
+    // Reactive Persistent Privacy Blocked Items Flows
     val totalBlockedCount: StateFlow<Int> = ContentBlocker.totalBlockedCount
+    val totalTrackersCount: StateFlow<Int> = ContentBlocker.totalTrackersCount
+    val totalAdsCount: StateFlow<Int> = ContentBlocker.totalAdsCount
+
+    fun resetPrivacyStats() {
+        ContentBlocker.resetStats()
+    }
 
     // Sheets & Dialogs
     private val _activeSheet = MutableStateFlow(ActiveSheet.NONE)
@@ -416,6 +422,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     init {
+        // Initialize ContentBlocker with persistent preferences so blocked statistics survive app restarts
+        ContentBlocker.initialize(preferences)
+
         val defaultTabId = UUID.randomUUID().toString()
         _activeTabId.value = defaultTabId
         _activeTabState.value = ActiveTabState(

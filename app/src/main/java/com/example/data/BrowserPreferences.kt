@@ -26,6 +26,41 @@ class BrowserPreferences(context: Context) {
         private const val KEY_WEATHER_ON_NEW_TAB = "pref_weather_on_new_tab"
         private const val KEY_WEATHER_FAHRENHEIT = "pref_weather_fahrenheit"
         private const val KEY_TOOLBAR_POSITION = "pref_toolbar_position"
+        private const val KEY_TOTAL_BLOCKED_COUNT = "pref_total_blocked_count"
+        private const val KEY_TOTAL_TRACKERS_BLOCKED = "pref_total_trackers_blocked"
+        private const val KEY_TOTAL_ADS_BLOCKED = "pref_total_ads_blocked"
+    }
+
+    fun getTotalBlockedCount(): Long {
+        return prefs.getLong(KEY_TOTAL_BLOCKED_COUNT, 0L)
+    }
+
+    fun setTotalBlockedCount(count: Long) {
+        prefs.edit().putLong(KEY_TOTAL_BLOCKED_COUNT, count).apply()
+    }
+
+    fun getTotalTrackersBlocked(): Long {
+        return prefs.getLong(KEY_TOTAL_TRACKERS_BLOCKED, 0L)
+    }
+
+    fun setTotalTrackersBlocked(count: Long) {
+        prefs.edit().putLong(KEY_TOTAL_TRACKERS_BLOCKED, count).apply()
+    }
+
+    fun getTotalAdsBlocked(): Long {
+        return prefs.getLong(KEY_TOTAL_ADS_BLOCKED, 0L)
+    }
+
+    fun setTotalAdsBlocked(count: Long) {
+        prefs.edit().putLong(KEY_TOTAL_ADS_BLOCKED, count).apply()
+    }
+
+    fun resetPrivacyStats() {
+        prefs.edit()
+            .putLong(KEY_TOTAL_BLOCKED_COUNT, 0L)
+            .putLong(KEY_TOTAL_TRACKERS_BLOCKED, 0L)
+            .putLong(KEY_TOTAL_ADS_BLOCKED, 0L)
+            .apply()
     }
 
     fun getToolbarPosition(): com.example.browser.ToolbarPosition {

@@ -283,16 +283,10 @@ fun BrowserScreen(
                 map.values.toList()
             }
 
-            // Decouple WebView container padding from dynamic bottom bar hide/show animation
-            // to completely eliminate Chromium viewport relayout jitter when reversing scroll direction
-            // Status bar protection area is always preserved at the top of the viewport
+            // Keep status bar and navigation bar insets cleanly separated from web content
+            // so web page elements (like YouTube's bottom navigation menu) never collide with browser toolbars
             val effectiveTopPadding = innerPadding.calculateTopPadding()
-
-            val effectiveBottomPadding = if (isHome) {
-                innerPadding.calculateBottomPadding()
-            } else {
-                0.dp
-            }
+            val effectiveBottomPadding = innerPadding.calculateBottomPadding()
 
             Box(
                 modifier = Modifier

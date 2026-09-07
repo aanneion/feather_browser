@@ -36,6 +36,14 @@ fun PrivacyShieldDialog(
     val domain = UrlUtils.extractDomain(activeTab?.url ?: "")
     val tabBlockedCount = activeTab?.blockedCount ?: 0
     val totalBlocked by ContentBlocker.totalBlockedCount.collectAsState()
+    val totalTrackers by ContentBlocker.totalTrackersCount.collectAsState()
+    val totalAds by ContentBlocker.totalAdsCount.collectAsState()
+
+    val estimatedBytesSaved = totalBlocked * 48_000L
+    val dataSavedString = when {
+        estimatedBytesSaved < 1024 * 1024 -> "${estimatedBytesSaved / 1024} KB"
+        else -> String.format(java.util.Locale.US, "%.1f MB", estimatedBytesSaved / (1024f * 1024f))
+    }
 
     val isShieldActiveOnCurrentSite = isGlobalBlockerEnabled && !isSiteWhitelisted
 
@@ -139,7 +147,7 @@ fun PrivacyShieldDialog(
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
-            // Stats Cards
+            // Stats Cards - Primary
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -177,8 +185,76 @@ fun PrivacyShieldDialog(
                             color = Color(0xFF10B981)
                         )
                         Text(
-                            text = "Total Blocked",
+                            text = "Total Blocked (All-time)",
                             fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Breakdown Stats Cards - Trackers, Ads, Data Saved
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "$totalTrackers",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Trackers",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "$totalAds",
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Ads & Promos",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = dataSavedString,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF0284C7)
+                        )
+                        Text(
+                            text = "Data Saved",
+                            fontSize = 10.5.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -220,7 +296,33 @@ fun PrivacyShieldDialog(
                 }
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Reset Statistics action
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                TextButton(
+                    onClick = { ContentBlocker.resetStats() },
+                    modifier = Modifier.testTag("reset_privacy_stats_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Reset All-Time Stats",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }

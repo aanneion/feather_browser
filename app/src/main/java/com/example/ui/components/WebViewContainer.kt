@@ -45,11 +45,42 @@ class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
 
+    private var touchStartY = 0f
+    private var lastTouchY = 0f
+    private var isTouchDragging = false
+
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                touchStartY = event.rawY
+                lastTouchY = event.rawY
+                isTouchDragging = false
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                val currentY = event.rawY
+                val deltaY = (lastTouchY - currentY).toInt()
+                if (kotlin.math.abs(currentY - touchStartY) > 20) {
+                    isTouchDragging = true
+                }
+                if (isTouchDragging && kotlin.math.abs(deltaY) >= 10) {
+                    onScrollChangedListener?.invoke(deltaY, scrollY)
+                    lastTouchY = currentY
+                }
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                isTouchDragging = false
+            }
+        }
+        return super.onTouchEvent(event)
+    }
+
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
-        val deltaY = t - oldt
-        if (deltaY != 0) {
-            onScrollChangedListener?.invoke(deltaY, t)
+        if (!isTouchDragging) {
+            val deltaY = t - oldt
+            if (deltaY != 0) {
+                onScrollChangedListener?.invoke(deltaY, t)
+            }
         }
     }
 

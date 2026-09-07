@@ -181,13 +181,19 @@ fun UnifiedBottomCommandBar(
     val suggestionsMaxHeight = (screenHeightDp - effectiveBottomInset - statusBarTopDp - 76.dp)
         .coerceIn(160.dp, 440.dp)
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(bottom = effectiveBottomInset)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 3.dp,
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
+        modifier = modifier.fillMaxWidth()
     ) {
-        // Search Suggestions Overlay above the bottom dock
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = effectiveBottomInset)
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            // Search Suggestions Overlay above the bottom dock
         val trimmedQuery = inputText.trim()
         val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
             (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
@@ -834,4 +840,5 @@ fun UnifiedBottomCommandBar(
             }
         }
     }
+}
 }

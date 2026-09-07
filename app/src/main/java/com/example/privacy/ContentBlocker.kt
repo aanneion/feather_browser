@@ -2,6 +2,14 @@ package com.example.privacy
 
 import android.net.Uri
 import android.webkit.WebResourceResponse
+import com.example.data.BrowserPreferences
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.updateAndGet
+import kotlinx.coroutines.launch
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -9,8 +17,69 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Lightweight, high-performance rule-based ad and tracker blocker.
  * Intercepts tracking pixels, telemetry, analytics beacons, ad network calls, and intrusive scripts.
+ * Persistently records cumulative stats so the Privacy Dashboard retains history across app restarts.
  */
 object ContentBlocker {
+
+    private var browserPreferences: BrowserPreferences? = null
+    private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Overall persistent blocked items counters (Reactive StateFlows)
+    private val _totalBlockedCount = MutableStateFlow(0)
+    val totalBlockedCount: StateFlow<Int> = _totalBlockedCount
+
+    private val _totalTrackersCount = MutableStateFlow(0)
+    val totalTrackersCount: StateFlow<Int> = _totalTrackersCount
+
+    private val _totalAdsCount = MutableStateFlow(0)
+    val totalAdsCount: StateFlow<Int> = _totalAdsCount
+
+    fun initialize(preferences: BrowserPreferences) {
+        browserPreferences = preferences
+        val savedTotal = preferences.getTotalBlockedCount().toInt()
+        val savedTrackers = preferences.getTotalTrackersBlocked().toInt()
+        val savedAds = preferences.getTotalAdsBlocked().toInt()
+
+        val currentTotal = _totalBlockedCount.value
+        val currentTrackers = _totalTrackersCount.value
+        val currentAds = _totalAdsCount.value
+
+        val newTotal = maxOf(savedTotal, savedTotal + currentTotal)
+        val newTrackers = maxOf(savedTrackers, savedTrackers + currentTrackers)
+        val newAds = maxOf(savedAds, savedAds + currentAds)
+
+        _totalBlockedCount.value = newTotal
+        _totalTrackersCount.value = newTrackers
+        _totalAdsCount.value = newAds
+
+        if (currentTotal > 0) {
+            ioScope.launch {
+                preferences.setTotalBlockedCount(newTotal.toLong())
+                preferences.setTotalTrackersBlocked(newTrackers.toLong())
+                preferences.setTotalAdsBlocked(newAds.toLong())
+            }
+        }
+    }
+
+    fun resetStats() {
+        _totalBlockedCount.value = 0
+        _totalTrackersCount.value = 0
+        _totalAdsCount.value = 0
+        browserPreferences?.resetPrivacyStats()
+    }
+
+    private fun recordBlockedItem(isTracker: Boolean) {
+        val total = _totalBlockedCount.updateAndGet { it + 1 }
+        val trackers = if (isTracker) _totalTrackersCount.updateAndGet { it + 1 } else _totalTrackersCount.value
+        val ads = if (!isTracker) _totalAdsCount.updateAndGet { it + 1 } else _totalAdsCount.value
+
+        val prefs = browserPreferences ?: return
+        ioScope.launch {
+            prefs.setTotalBlockedCount(total.toLong())
+            prefs.setTotalTrackersBlocked(trackers.toLong())
+            prefs.setTotalAdsBlocked(ads.toLong())
+        }
+    }
 
     // Default blocklist of notorious tracking and advertising host patterns
     private val blockedHostSuffixes = hashSetOf(
@@ -83,12 +152,39 @@ object ContentBlocker {
         "/gtag/js"
     )
 
+    private val trackerHostSuffixes = hashSetOf(
+        "google-analytics.com",
+        "googletagmanager.com",
+        "hotjar.com",
+        "clarity.ms",
+        "mouseflow.com",
+        "mixpanel.com",
+        "segment.io",
+        "amplitude.com",
+        "appsflyer.com",
+        "adjust.com",
+        "branch.io",
+        "chartbeat.com",
+        "crazyegg.com",
+        "newrelic.com",
+        "nr-data.net",
+        "optimizely.com",
+        "fullstory.com",
+        "heapanalytics.com",
+        "statcounter.com",
+        "yandex.ru/metrika",
+        "mc.yandex.ru"
+    )
+
+    private val trackerPathKeywords = arrayOf(
+        "/pixel.gif",
+        "/tr?id=",
+        "/analytics.js",
+        "/gtag/js"
+    )
+
     // Blocked count per tab ID
     private val tabBlockCounts = ConcurrentHashMap<String, AtomicInteger>()
-    
-    // Overall session blocked items counter (Reactive StateFlow)
-    private val _totalBlockedCount = kotlinx.coroutines.flow.MutableStateFlow(0)
-    val totalBlockedCount: kotlinx.coroutines.flow.StateFlow<Int> = _totalBlockedCount
 
     fun shouldBlock(uri: Uri, isGlobalBlockerEnabled: Boolean, isSiteWhitelisted: Boolean): Boolean {
         if (!isGlobalBlockerEnabled || isSiteWhitelisted) return false
@@ -102,7 +198,7 @@ object ContentBlocker {
 
         // Check specialized YouTube ad endpoints
         if (YouTubeAdBlocker.isYouTubeAdRequest(uri)) {
-            _totalBlockedCount.value += 1
+            recordBlockedItem(isTracker = false)
             return true
         }
         val pathAndQuery = (uri.path ?: "") + (uri.query?.let { "?$it" } ?: "")
@@ -110,7 +206,8 @@ object ContentBlocker {
         // Check host suffix match (e.g. ad.doubleclick.net endsWith doubleclick.net)
         for (blockedHost in blockedHostSuffixes) {
             if (host == blockedHost || host.endsWith(".$blockedHost")) {
-                _totalBlockedCount.value += 1
+                val isTracker = trackerHostSuffixes.contains(blockedHost)
+                recordBlockedItem(isTracker = isTracker)
                 return true
             }
         }
@@ -119,7 +216,8 @@ object ContentBlocker {
         val lowerPath = pathAndQuery.lowercase()
         for (kw in blockedPathKeywords) {
             if (lowerPath.contains(kw)) {
-                _totalBlockedCount.value += 1
+                val isTracker = trackerPathKeywords.any { kw.contains(it) }
+                recordBlockedItem(isTracker = isTracker)
                 return true
             }
         }
