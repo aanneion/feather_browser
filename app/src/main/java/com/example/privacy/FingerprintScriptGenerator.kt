@@ -79,32 +79,26 @@ object FingerprintScriptGenerator {
                 window.__feather_bg_play_active = true;
 
                 // 1. Spoof Page Visibility API so websites (like YouTube) report visible and focused
-                try {
-                    const defineProp = function(obj, prop, value) {
-                        try {
-                            Object.defineProperty(obj, prop, {
-                                get: function() { return value; },
-                                set: function() {},
-                                configurable: true,
-                                enumerable: true
-                            });
-                        } catch(e) {}
-                    };
+                ['hidden', 'webkitHidden'].forEach(function(prop) {
+                    try {
+                        Object.defineProperty(document, prop, { get: function() { return false; }, configurable: true, enumerable: true });
+                        Object.defineProperty(Document.prototype, prop, { get: function() { return false; }, configurable: true, enumerable: true });
+                    } catch(e) {}
+                });
 
-                    defineProp(document, 'hidden', false);
-                    defineProp(document, 'visibilityState', 'visible');
-                    defineProp(document, 'webkitHidden', false);
-                    defineProp(document, 'webkitVisibilityState', 'visible');
-                    defineProp(Document.prototype, 'hidden', false);
-                    defineProp(Document.prototype, 'visibilityState', 'visible');
-                    defineProp(Document.prototype, 'webkitHidden', false);
-                    defineProp(Document.prototype, 'webkitVisibilityState', 'visible');
-                    
+                ['visibilityState', 'webkitVisibilityState'].forEach(function(prop) {
+                    try {
+                        Object.defineProperty(document, prop, { get: function() { return 'visible'; }, configurable: true, enumerable: true });
+                        Object.defineProperty(Document.prototype, prop, { get: function() { return 'visible'; }, configurable: true, enumerable: true });
+                    } catch(e) {}
+                });
+
+                try {
                     document.hasFocus = function() { return true; };
                     Document.prototype.hasFocus = function() { return true; };
                 } catch(e) {}
 
-                // 2. Prevent YouTube from auto-pausing on tab change: intercept visibilitychange event listeners
+                // 2. Prevent YouTube from auto-pausing on tab change: intercept visibilitychange and pagehide
                 try {
                     const origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
@@ -114,19 +108,50 @@ object FingerprintScriptGenerator {
                         return origAddEventListener.apply(this, arguments);
                     };
 
-                    ['visibilitychange', 'webkitvisibilitychange'].forEach(function(evt) {
-                        origAddEventListener.call(window, evt, function(e) {
+                    ['visibilitychange', 'webkitvisibilitychange', 'pagehide'].forEach(function(evt) {
+                        window.addEventListener(evt, function(e) {
                             if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
                             if (e && e.stopPropagation) e.stopPropagation();
                         }, true);
-                        origAddEventListener.call(document, evt, function(e) {
+                        document.addEventListener(evt, function(e) {
                             if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
                             if (e && e.stopPropagation) e.stopPropagation();
                         }, true);
                     });
                 } catch(e) {}
 
-                // 3. Media Session Hooking for Android notification metadata & controls
+                // 3. Spoof IntersectionObserver for video / player elements so YouTube mobile doesn't pause when offscreen
+                try {
+                    if ('IntersectionObserver' in window) {
+                        const OrigObserver = window.IntersectionObserver;
+                        window.IntersectionObserver = function(callback, options) {
+                            const wrappedCallback = function(entries, obs) {
+                                try {
+                                    const modified = entries.map(function(entry) {
+                                        const target = entry.target;
+                                        if (target && (target.tagName === 'VIDEO' || target.id === 'player' || (target.className && typeof target.className === 'string' && (target.className.indexOf('player') !== -1 || target.className.indexOf('video') !== -1)))) {
+                                            return new Proxy(entry, {
+                                                get: function(t, p) {
+                                                    if (p === 'isIntersecting') return true;
+                                                    if (p === 'intersectionRatio') return 1.0;
+                                                    return t[p];
+                                                }
+                                            });
+                                        }
+                                        return entry;
+                                    });
+                                    return callback(modified, obs);
+                                } catch(e) {
+                                    return callback(entries, obs);
+                                }
+                            };
+                            return new OrigObserver(wrappedCallback, options);
+                        };
+                        window.IntersectionObserver.prototype = OrigObserver.prototype;
+                    }
+                } catch(e) {}
+
+                // 4. Media Session Hooking for Android notification metadata & controls
                 window.__feather_actions = window.__feather_actions || {};
 
                 function getMediaThumbnail() {
@@ -147,14 +172,14 @@ object FingerprintScriptGenerator {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) {
                             return navigator.mediaSession.metadata.title;
                         }
-                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link');
+                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link, [class*="video-title"]');
                         if (ytTitle && ytTitle.innerText && ytTitle.innerText.trim()) {
                             return ytTitle.innerText.trim();
                         }
                         const docTitle = document.title.replace(/ - YouTube$/i, '').replace(/^\(\d+\)\s*/, '').trim();
                         if (docTitle && docTitle !== 'YouTube') return docTitle;
                     } catch(e) {}
-                    return 'YouTube';
+                    return 'YouTube Video';
                 }
 
                 function getMediaArtist() {
@@ -162,7 +187,7 @@ object FingerprintScriptGenerator {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist) {
                             return navigator.mediaSession.metadata.artist;
                         }
-                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name');
+                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name, [class*="channel-name"]');
                         if (ytAuthor && ytAuthor.innerText && ytAuthor.innerText.trim()) {
                             return ytAuthor.innerText.trim();
                         }
@@ -175,59 +200,79 @@ object FingerprintScriptGenerator {
                 function notifyMediaBridge(isPlaying) {
                     try {
                         if (!window.FeatherMediaBridge) return;
-                        if (!isPlaying && !wasActivePlayback) return;
-
                         if (isPlaying) {
                             wasActivePlayback = true;
                             const title = getMediaTitle();
                             const artist = getMediaArtist();
                             const art = getMediaThumbnail();
-                            window.FeatherMediaBridge.updateMetadata(title, artist, 'Feather Browser', art);
+                            window.FeatherMediaBridge.updateMetadata(title, artist, 'YouTube', art);
+                            window.FeatherMediaBridge.updatePlaybackState(true);
+                        } else {
+                            if (wasActivePlayback) {
+                                window.FeatherMediaBridge.updatePlaybackState(false);
+                            }
                         }
-                        window.FeatherMediaBridge.updatePlaybackState(isPlaying);
                     } catch(e) {}
                 }
 
                 try {
                     if ('mediaSession' in navigator) {
-                        const origMS = navigator.mediaSession;
+                        const ms = navigator.mediaSession;
+                        let _currentMetadata = ms.metadata || null;
+
                         try {
-                            const origSetMetadata = Object.getOwnPropertyDescriptor(MediaSession.prototype, 'metadata')?.set;
-                            if (origSetMetadata) {
-                                Object.defineProperty(origMS, 'metadata', {
-                                    set: function(val) {
-                                        try {
-                                            if (window.FeatherMediaBridge && val) {
-                                                let artUrl = '';
-                                                if (val.artwork && val.artwork.length > 0) {
-                                                    artUrl = val.artwork[val.artwork.length - 1].src || '';
-                                                }
-                                                window.FeatherMediaBridge.updateMetadata(
-                                                    val.title || getMediaTitle(),
-                                                    val.artist || getMediaArtist(),
-                                                    val.album || 'Feather Browser',
-                                                    artUrl || getMediaThumbnail()
-                                                );
+                            const proto = Object.getPrototypeOf(ms) || ms;
+                            const desc = Object.getOwnPropertyDescriptor(proto, 'metadata') || Object.getOwnPropertyDescriptor(ms, 'metadata');
+                            Object.defineProperty(ms, 'metadata', {
+                                get: function() {
+                                    if (desc && desc.get) {
+                                        try { return desc.get.call(this); } catch(e) {}
+                                    }
+                                    return _currentMetadata;
+                                },
+                                set: function(val) {
+                                    _currentMetadata = val;
+                                    if (desc && desc.set) {
+                                        try { desc.set.call(this, val); } catch(e) {}
+                                    }
+                                    try {
+                                        if (window.FeatherMediaBridge && val) {
+                                            let artUrl = '';
+                                            if (val.artwork && val.artwork.length > 0) {
+                                                artUrl = val.artwork[val.artwork.length - 1].src || '';
                                             }
-                                        } catch(e) {}
-                                        return origSetMetadata.call(this, val);
-                                    },
-                                    configurable: true
-                                });
-                            }
+                                            const t = val.title || getMediaTitle();
+                                            const a = val.artist || getMediaArtist();
+                                            window.FeatherMediaBridge.updateMetadata(
+                                                t,
+                                                a,
+                                                val.album || 'YouTube',
+                                                artUrl || getMediaThumbnail()
+                                            );
+                                            window.FeatherMediaBridge.updatePlaybackState(true);
+                                        }
+                                    } catch(e) {}
+                                },
+                                configurable: true,
+                                enumerable: true
+                            });
                         } catch(e) {}
 
                         try {
-                            const origSetHandler = origMS.setActionHandler.bind(origMS);
-                            origMS.setActionHandler = function(action, handler) {
-                                window.__feather_actions[action] = handler;
-                                return origSetHandler(action, handler);
-                            };
+                            const origSetHandler = ms.setActionHandler;
+                            if (typeof origSetHandler === 'function') {
+                                ms.setActionHandler = function(action, handler) {
+                                    window.__feather_actions[action] = handler;
+                                    try {
+                                        return origSetHandler.call(ms, action, handler);
+                                    } catch(e) {}
+                                };
+                            }
                         } catch(e) {}
                     }
                 } catch(e) {}
 
-                // 4. Media control methods callable from notification bar
+                // 5. Media control methods callable from notification bar
                 window.__feather_media_play = function() {
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['play'] === 'function') {
@@ -331,7 +376,7 @@ object FingerprintScriptGenerator {
                     }
                 };
 
-                // 5. Periodic monitor & watchdog for HTML media elements
+                // 6. Periodic monitor & watchdog for HTML media elements
                 let lastReportedState = null;
                 let lastReportedTitle = '';
 
@@ -339,20 +384,29 @@ object FingerprintScriptGenerator {
                     if (!el || el.__feather_monitored) return;
                     el.__feather_monitored = true;
 
-                    ['play', 'playing'].forEach(function(evt) {
-                        el.addEventListener(evt, function() {
+                    function handlePlay() {
+                        wasActivePlayback = true;
+                        notifyMediaBridge(true);
+                    }
+
+                    el.addEventListener('play', handlePlay);
+                    el.addEventListener('playing', handlePlay);
+                    el.addEventListener('timeupdate', function() {
+                        if (!el.paused && !el.ended && !wasActivePlayback) {
                             wasActivePlayback = true;
                             notifyMediaBridge(true);
-                        });
+                        }
                     });
 
                     el.addEventListener('pause', function() {
-                        const anyStillPlaying = Array.from(document.querySelectorAll('video, audio')).some(function(m) {
-                            return !m.paused && !m.ended;
-                        });
-                        if (!anyStillPlaying) {
-                            notifyMediaBridge(false);
-                        }
+                        setTimeout(function() {
+                            const anyPlaying = Array.from(document.querySelectorAll('video, audio')).some(function(m) {
+                                return !m.paused && !m.ended;
+                            });
+                            if (!anyPlaying) {
+                                notifyMediaBridge(false);
+                            }
+                        }, 250);
                     });
 
                     el.addEventListener('ended', function() {
@@ -369,7 +423,7 @@ object FingerprintScriptGenerator {
                         let anyPlaying = false;
                         els.forEach(function(el) {
                             hookMediaElement(el);
-                            if (!el.paused && !el.ended) {
+                            if (!el.paused && !el.ended && el.currentTime > 0) {
                                 anyPlaying = true;
                             }
                         });
@@ -388,7 +442,7 @@ object FingerprintScriptGenerator {
                         }
                     } catch(e) {}
                 };
-                setInterval(monitorMedia, 1000);
+                setInterval(monitorMedia, 800);
                 monitorMedia();
             } catch(e) {}
         })();

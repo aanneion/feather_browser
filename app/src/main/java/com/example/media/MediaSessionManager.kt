@@ -96,6 +96,15 @@ object MediaSessionManager {
         _activeMediaTabId.value = tabId
 
         if (playing) {
+            if (_currentMetadata.value == null) {
+                _currentMetadata.value = BrowserMediaMetadata(
+                    title = "YouTube Video",
+                    artist = "YouTube",
+                    album = "Feather Browser",
+                    artworkUrl = "",
+                    tabId = tabId
+                )
+            }
             startOrUpdateService(context)
         } else if (isServiceActive) {
             startOrUpdateService(context)

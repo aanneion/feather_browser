@@ -121,6 +121,35 @@ class PersistentWebView(context: Context) : WebView(context) {
         return if (allowBackgroundPlayback) View.VISIBLE else super.getWindowVisibility()
     }
 
+    override fun hasWindowFocus(): Boolean {
+        return if (allowBackgroundPlayback) true else super.hasWindowFocus()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
+            super.onWindowFocusChanged(effectiveFocus)
+        } catch (e: Throwable) { }
+    }
+
+    override fun dispatchWindowFocusChanged(hasFocus: Boolean) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else hasFocus
+            super.dispatchWindowFocusChanged(effectiveFocus)
+        } catch (e: Throwable) { }
+    }
+
+    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+        try {
+            val effectiveFocus = if (allowBackgroundPlayback) true else focused
+            super.onFocusChanged(effectiveFocus, direction, previouslyFocusedRect)
+        } catch (e: Throwable) { }
+    }
+
+    override fun hasFocus(): Boolean {
+        return if (allowBackgroundPlayback) true else super.hasFocus()
+    }
+
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {

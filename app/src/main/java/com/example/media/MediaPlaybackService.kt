@@ -65,14 +65,6 @@ class MediaPlaybackService : Service() {
             artwork = cachedArtworkBitmap
         )
         promoteToForeground(initialNotification)
-
-        if (metadata == null && !isPlaying) {
-            mediaSession?.setActive(false)
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
-            manager?.cancel(NOTIFICATION_ID)
-            stopSelf()
-        }
     }
 
     private fun setupMediaSession() {
@@ -188,6 +180,10 @@ class MediaPlaybackService : Service() {
 
         val notification = buildNotification(title, artist, album, isPlaying, cachedArtworkBitmap)
         promoteToForeground(notification)
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) { }
 
         // Asynchronously fetch artwork if new URL provided
         if (artworkUrl.isNotBlank() && artworkUrl != cachedArtworkUrl) {
