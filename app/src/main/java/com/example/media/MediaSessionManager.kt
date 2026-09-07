@@ -97,7 +97,7 @@ object MediaSessionManager {
 
         if (playing) {
             startOrUpdateService(context)
-        } else if (isServiceActive && _currentMetadata.value != null) {
+        } else if (isServiceActive) {
             startOrUpdateService(context)
         } else {
             stopPlayback(context)
@@ -105,6 +105,13 @@ object MediaSessionManager {
     }
 
     fun dispatchAction(action: MediaControlAction) {
+        when (action) {
+            MediaControlAction.PLAY -> _isPlaying.value = true
+            MediaControlAction.PAUSE -> _isPlaying.value = false
+            MediaControlAction.TOGGLE_PLAY_PAUSE -> _isPlaying.value = !_isPlaying.value
+            MediaControlAction.STOP -> _isPlaying.value = false
+            else -> {}
+        }
         scope.launch {
             _controlActions.emit(action)
         }
@@ -123,12 +130,7 @@ object MediaSessionManager {
                         "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
                     }
                     MediaControlAction.TOGGLE_PLAY_PAUSE -> {
-                        val isPlaying = _isPlaying.value
-                        if (isPlaying) {
-                            "if (window.__feather_media_pause) window.__feather_media_pause(); else document.querySelector('video, audio')?.pause();"
-                        } else {
-                            "if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
-                        }
+                        "if (window.__feather_media_toggle) window.__feather_media_toggle(); else if (window.__feather_media_play) window.__feather_media_play(); else document.querySelector('video, audio')?.play();"
                     }
                     MediaControlAction.NEXT -> {
                         "if (window.__feather_media_next) window.__feather_media_next();"

@@ -86,25 +86,25 @@ class PersistentWebView(context: Context) : WebView(context) {
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         try {
-            // When allowBackgroundPlayback is enabled and view is attached, report View.VISIBLE
-            // to keep HTML5 audio/media engine playing in background without breaking detach lifecycle
-            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
+            // When allowBackgroundPlayback is enabled, report View.VISIBLE
+            // to keep HTML5 audio/media engine playing in background without suspension
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
             super.onWindowVisibilityChanged(effectiveVisibility)
         } catch (e: Throwable) {
-            // Guard against Chromium native compositor edge cases during surface attachment
+            // Guard against Chromium native compositor edge cases
         }
     }
 
     override fun dispatchVisibilityChanged(changedView: View, visibility: Int) {
         try {
-            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
             super.dispatchVisibilityChanged(changedView, effectiveVisibility)
         } catch (e: Throwable) { }
     }
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         try {
-            val effectiveVisibility = if (allowBackgroundPlayback && isAttachedToWindow) View.VISIBLE else visibility
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
             super.onVisibilityChanged(changedView, effectiveVisibility)
         } catch (e: Throwable) { }
     }

@@ -9,8 +9,8 @@ android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
-  val envVersionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 108
-  val envVersionName = System.getenv("APP_VERSION_NAME") ?: "1.0.108"
+  val envVersionCode = System.getenv("APP_VERSION_CODE")?.toIntOrNull() ?: 109
+  val envVersionName = System.getenv("APP_VERSION_NAME") ?: "1.0.109"
 
   defaultConfig {
     applicationId = "apps.feather.browser"
