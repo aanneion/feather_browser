@@ -195,37 +195,4 @@ object DeviceUtils {
             || manufacturer.contains("genymotion")
             || isX86
     }
-
-    val hasDrmRenderNode: Boolean by lazy {
-        try {
-            val renderNode = java.io.File("/dev/dri/renderD128")
-            if (renderNode.exists() && renderNode.canRead()) return@lazy true
-            val dri = java.io.File("/dev/dri")
-            if (dri.exists() && dri.isDirectory) {
-                val list = dri.listFiles()
-                return@lazy !list.isNullOrEmpty() && list.any { it.name.startsWith("renderD") && it.canRead() }
-            }
-            false
-        } catch (e: Throwable) {
-            false
-        }
-    }
-
-    val isDrmSystemWithoutRenderNode: Boolean by lazy {
-        try {
-            val dri = java.io.File("/dev/dri")
-            dri.exists() && !hasDrmRenderNode
-        } catch (e: Throwable) {
-            false
-        }
-    }
-
-    /**
-     * Determines whether WebView should use software rendering (LAYER_TYPE_SOFTWARE)
-     * to prevent Mesa driver crashes and "Failed to open rendernode" errors in emulators
-     * and virtualized environments where host DRM graphics devices are absent or restricted.
-     */
-    val needsSoftwareRendering: Boolean by lazy {
-        isEmulator || isDrmSystemWithoutRenderNode
-    }
 }

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebSettingsCompat
@@ -45,12 +46,6 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
-
-    init {
-        if (com.example.browser.DeviceUtils.needsSoftwareRendering) {
-            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-        }
-    }
 
     private var touchStartY = 0f
     private var lastTouchY = 0f
@@ -355,6 +350,14 @@ fun WebViewContainer(
     }
 
     // Clean up WebView memory, media players, and textures when tab is closed
+    LaunchedEffect(effectiveDark) {
+        val webView = webViewRef ?: return@LaunchedEffect
+        try {
+            val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+            webView.evaluateJavascript(themeScript, null)
+        } catch (e: Exception) { }
+    }
+
     DisposableEffect(tabId) {
         onDispose {
             try {
@@ -381,15 +384,17 @@ fun WebViewContainer(
     }
 
     key(tabId, renderCrashCount) {
-        Box(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .then(if (isActive) Modifier else Modifier.size(0.dp))
+                .background(MaterialTheme.colorScheme.background)
+        ) {
             AndroidView<SwipeRefreshLayout>(
                 factory = { ctx ->
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
-                        if (com.example.browser.DeviceUtils.needsSoftwareRendering) {
-                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                        }
                         isNestedScrollingEnabled = true
-                        visibility = View.VISIBLE
+                        visibility = if (isActive) View.VISIBLE else View.GONE
                         isEnabled = (customVideoView == null) && isActive
                         layoutParams = ViewGroup.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -430,9 +435,8 @@ fun WebViewContainer(
                         val initialBgColor = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
                         setBackgroundColor(initialBgColor)
 
-                        // Use software layer on emulators without host DRM rendernode (/dev/dri/renderD*)
-                        // or after a render process crash to avoid Mesa EGL failures.
-                        if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
+                        // Use software layer only as a recovery fallback if a render process crash occurred
+                        if (renderCrashCount > 0) {
                             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                         } else {
                             setLayerType(View.LAYER_TYPE_NONE, null)
@@ -600,27 +604,6 @@ fun WebViewContainer(
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false
                                 )
-
-                                // Early injection of Background Audio/Video playback script
-                                if (enableBackgroundPlay) {
-                                    try {
-                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
-                                        view?.evaluateJavascript(bgScript, null)
-                                    } catch (e: Exception) { }
-                                }
-
-                                // Inject YouTube AdBlocker script early
-                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
-                                    try {
-                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
-                                    } catch (e: Exception) { }
-                                }
-
-                                // Enforce CSS and JS color-scheme matching browser theme mode
-                                try {
-                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
-                                    view?.evaluateJavascript(themeScript, null)
-                                } catch (e: Exception) { }
                             }
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
@@ -629,34 +612,12 @@ fun WebViewContainer(
                                     val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
-                                if (enableBackgroundPlay) {
-                                    try {
-                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
-                                        view?.evaluateJavascript(bgScript, null)
-                                    } catch (e: Exception) { }
-                                }
-                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
-                                    try {
-                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
-                                    } catch (e: Exception) { }
-                                }
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                 super.doUpdateVisitedHistory(view, url, isReload)
                                 url?.let {
                                     viewModel.onUrlChanged(tabId, it)
-                                }
-                                if (enableBackgroundPlay) {
-                                    try {
-                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
-                                        view?.evaluateJavascript(bgScript, null)
-                                    } catch (e: Exception) { }
-                                }
-                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
-                                    try {
-                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
-                                    } catch (e: Exception) { }
                                 }
                             }
 
@@ -946,7 +907,7 @@ fun WebViewContainer(
                 },
                 update = { swipeRefresh ->
                     swipeRefreshRef = swipeRefresh
-                    swipeRefresh.visibility = View.VISIBLE
+                    swipeRefresh.visibility = if (isActive) View.VISIBLE else View.GONE
                     val webView = (0 until swipeRefresh.childCount)
                         .map { swipeRefresh.getChildAt(it) }
                         .filterIsInstance<PersistentWebView>()
@@ -958,10 +919,13 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
 
-                    // Maintain software layer on emulators to prevent Mesa EGL crashes
-                    if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
+                    if (renderCrashCount > 0) {
                         if (webView.layerType != View.LAYER_TYPE_SOFTWARE) {
                             webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                        }
+                    } else {
+                        if (webView.layerType != View.LAYER_TYPE_NONE) {
+                            webView.setLayerType(View.LAYER_TYPE_NONE, null)
                         }
                     }
 
@@ -997,12 +961,6 @@ fun WebViewContainer(
                     } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
                         WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, effectiveDark)
                     }
-
-                    // Dynamically update page theme script
-                    try {
-                        val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
-                        webView.evaluateJavascript(themeScript, null)
-                    } catch (e: Exception) { }
                 },
                 modifier = Modifier.fillMaxSize()
             )
@@ -1012,7 +970,7 @@ fun WebViewContainer(
                 AndroidView(
                     factory = {
                         customVideoView!!.apply {
-                            if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
+                            if (renderCrashCount > 0) {
                                 setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                             }
                         }
