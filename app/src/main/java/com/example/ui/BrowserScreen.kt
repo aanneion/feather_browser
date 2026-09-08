@@ -268,9 +268,20 @@ fun BrowserScreen(
             val activeTabIsDesktop = activeTabState?.isDesktopMode
             val activeTabIsPrivate = activeTabState?.isPrivate
 
-            val openTabs = remember(currentTabs, activeTabId) {
+            val openTabs = remember(currentTabs, activeTabId, activeTabUrl) {
                 val map = linkedMapOf<String, BrowserTab>()
-                currentTabs.forEach { map[it.id] = it }
+                currentTabs.forEach { tab ->
+                    if (tab.id == activeTabId && activeTabUrl != null) {
+                        map[tab.id] = tab.copy(
+                            url = activeTabUrl,
+                            title = activeTabTitle ?: tab.title,
+                            isDesktopMode = activeTabIsDesktop ?: tab.isDesktopMode,
+                            isPrivate = activeTabIsPrivate ?: tab.isPrivate
+                        )
+                    } else {
+                        map[tab.id] = tab
+                    }
+                }
                 if (activeTabId.isNotBlank() && !map.containsKey(activeTabId)) {
                     map[activeTabId] = BrowserTab(
                         id = activeTabId,

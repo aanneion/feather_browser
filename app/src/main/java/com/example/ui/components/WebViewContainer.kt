@@ -1003,13 +1003,6 @@ fun WebViewContainer(
                         val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
                         webView.evaluateJavascript(themeScript, null)
                     } catch (e: Exception) { }
-
-                    if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
-                        val cur = webView.url ?: ""
-                        if (cur.isEmpty() || cur == "about:blank") {
-                            webView.loadUrl(initialUrl)
-                        }
-                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )

@@ -754,6 +754,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val tabId = _activeTabId.value
         _activeTabState.update { it?.copy(url = "", title = "New Tab", progress = 0, isLoading = false) }
         viewModelScope.launch {
+            _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId))
             _webViewActionEvent.emit(WebViewAction.LoadUrl("about:blank", targetTabId = tabId))
             val cur = currentTabs.value.find { it.id == tabId }
             if (cur != null) {

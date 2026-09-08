@@ -113,6 +113,7 @@ class MainActivity : ComponentActivity() {
         val data = intent?.dataString
         if (action == Intent.ACTION_VIEW && !data.isNullOrBlank()) {
             viewModel.navigateTo(data)
+            intent.data = null
         }
     }
 }
