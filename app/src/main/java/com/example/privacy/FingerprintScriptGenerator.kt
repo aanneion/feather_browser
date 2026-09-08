@@ -16,53 +16,100 @@ object FingerprintScriptGenerator {
         val vendor = preset.vendor
         val cores = preset.hardwareConcurrency
         val memory = preset.deviceMemory
-        val isStealth = preset == FingerprintPreset.ANONYMOUS_STEALTH
+        val isMobile = preset.isMobile
+        val uaPlatform = when {
+            platform.contains("Win") -> "Windows"
+            platform.contains("Mac") -> "macOS"
+            platform.contains("Chrome") -> "Chrome OS"
+            else -> "Android"
+        }
 
         return """
         (function() {
             try {
-                if (window.__fp_injected) return;
-                window.__fp_injected = true;
-                
-                Object.defineProperty(navigator, 'platform', {
-                    get: function() { return '$platform'; },
-                    configurable: true
-                });
-                
-                Object.defineProperty(navigator, 'vendor', {
-                    get: function() { return '$vendor'; },
-                    configurable: true
-                });
-                
-                Object.defineProperty(navigator, 'hardwareConcurrency', {
-                    get: function() { return $cores; },
-                    configurable: true
-                });
-                
-                if ('deviceMemory' in navigator) {
-                    Object.defineProperty(navigator, 'deviceMemory', {
-                        get: function() { return $memory; },
-                        configurable: true
-                    });
+                const targetPlatform = '$platform';
+                const targetVendor = '$vendor';
+                const targetCores = $cores;
+                const targetMemory = $memory;
+                const targetMobile = $isMobile;
+                const targetUaPlatform = '$uaPlatform';
+
+                // Prototype-level override (clean, native-like, passes Object.hasOwnProperty checks)
+                if (typeof Navigator !== 'undefined' && Navigator.prototype) {
+                    try {
+                        Object.defineProperty(Navigator.prototype, 'platform', {
+                            get: function() { return targetPlatform; },
+                            configurable: true,
+                            enumerable: true
+                        });
+                    } catch(e) {}
+
+                    try {
+                        Object.defineProperty(Navigator.prototype, 'vendor', {
+                            get: function() { return targetVendor; },
+                            configurable: true,
+                            enumerable: true
+                        });
+                    } catch(e) {}
+
+                    try {
+                        Object.defineProperty(Navigator.prototype, 'hardwareConcurrency', {
+                            get: function() { return targetCores; },
+                            configurable: true,
+                            enumerable: true
+                        });
+                    } catch(e) {}
+
+                    if ('deviceMemory' in Navigator.prototype) {
+                        try {
+                            Object.defineProperty(Navigator.prototype, 'deviceMemory', {
+                                get: function() { return targetMemory; },
+                                configurable: true,
+                                enumerable: true
+                            });
+                        } catch(e) {}
+                    }
+
+                    // Client Hints synchronization (Crucial for modern Chromium sites)
+                    if (navigator.userAgentData) {
+                        try {
+                            const origUAD = navigator.userAgentData;
+                            const spoofedUAD = {
+                                brands: origUAD.brands || [
+                                    { brand: 'Chromium', version: '131' },
+                                    { brand: 'Google Chrome', version: '131' },
+                                    { brand: 'Not_A Brand', version: '24' }
+                                ],
+                                mobile: targetMobile,
+                                platform: targetUaPlatform,
+                                getHighEntropyValues: function(hints) {
+                                    return origUAD.getHighEntropyValues ? origUAD.getHighEntropyValues(hints).then(function(values) {
+                                        return Object.assign({}, values, {
+                                            platform: targetUaPlatform,
+                                            mobile: targetMobile
+                                        });
+                                    }) : Promise.resolve({
+                                        platform: targetUaPlatform,
+                                        mobile: targetMobile
+                                    });
+                                },
+                                toJSON: function() {
+                                    return {
+                                        brands: this.brands,
+                                        mobile: this.mobile,
+                                        platform: this.platform
+                                    };
+                                }
+                            };
+                            Object.defineProperty(Navigator.prototype, 'userAgentData', {
+                                get: function() { return spoofedUAD; },
+                                configurable: true,
+                                enumerable: true
+                            });
+                        } catch(e) {}
+                    }
                 }
-
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: function() { return false; },
-                    configurable: true
-                });
-
-                ${if (isStealth) """
-                if (window.HTMLCanvasElement && HTMLCanvasElement.prototype.toDataURL) {
-                    const origToDataURL = HTMLCanvasElement.prototype.toDataURL;
-                    HTMLCanvasElement.prototype.toDataURL = function() {
-                        return origToDataURL.apply(this, arguments);
-                    };
-                }
-                """ else ""}
-
-            } catch(e) {
-                console.warn("FP protection notice", e);
-            }
+            } catch(e) { }
         })();
         """.trimIndent()
     }
@@ -78,7 +125,7 @@ object FingerprintScriptGenerator {
                 if (window.__feather_bg_play_active) return;
                 window.__feather_bg_play_active = true;
 
-                // 1. Spoof Page Visibility API so websites (like YouTube) report visible and focused
+                // 1. Spoof Page Visibility API so media sites report visible and focused
                 ['hidden', 'webkitHidden'].forEach(function(prop) {
                     try {
                         Object.defineProperty(document, prop, { get: function() { return false; }, configurable: true, enumerable: true });
@@ -96,35 +143,6 @@ object FingerprintScriptGenerator {
                 try {
                     document.hasFocus = function() { return true; };
                     Document.prototype.hasFocus = function() { return true; };
-                } catch(e) {}
-
-                // 2. Prevent YouTube from auto-pausing on tab change / backgrounding
-                const blockedEvents = ['visibilitychange', 'webkitvisibilitychange', 'pagehide', 'blur', 'focusout', 'freeze'];
-                try {
-                    const origAddEventListener = EventTarget.prototype.addEventListener;
-                    EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (typeof type === 'string' && blockedEvents.indexOf(type.toLowerCase()) !== -1) {
-                            return;
-                        }
-                        return origAddEventListener.apply(this, arguments);
-                    };
-
-                    blockedEvents.forEach(function(evt) {
-                        window.addEventListener(evt, function(e) {
-                            if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
-                            if (e && e.stopPropagation) e.stopPropagation();
-                        }, true);
-                        document.addEventListener(evt, function(e) {
-                            if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
-                            if (e && e.stopPropagation) e.stopPropagation();
-                        }, true);
-                    });
-
-                    try {
-                        Object.defineProperty(window, 'onblur', { get: function() { return null; }, set: function(v) {}, configurable: true });
-                        Object.defineProperty(window, 'onpagehide', { get: function() { return null; }, set: function(v) {}, configurable: true });
-                        Object.defineProperty(document, 'onvisibilitychange', { get: function() { return null; }, set: function(v) {}, configurable: true });
-                    } catch(e) {}
                 } catch(e) {}
 
                 // Track genuine user interaction vs automatic tab-switch pause

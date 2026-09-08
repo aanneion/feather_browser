@@ -2,8 +2,10 @@ package com.example.privacy
 
 import android.content.Context
 import android.webkit.CookieManager
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebStorage
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import com.example.data.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -41,9 +43,15 @@ class PrivacyManager(private val context: Context, private val database: AppData
             withContext(Dispatchers.Main) {
                 try {
                     // Clear WebView cache on main thread safely
-                    val dummyWebView = WebView(context)
+                    val dummyWebView = WebView(context).apply {
+                        webViewClient = object : WebViewClient() {
+                            override fun onRenderProcessGone(v: WebView?, detail: RenderProcessGoneDetail?): Boolean = true
+                        }
+                    }
                     dummyWebView.clearCache(true)
-                    dummyWebView.destroy()
+                    try {
+                        dummyWebView.destroy()
+                    } catch (e: Throwable) { }
                 } catch (e: Throwable) {
                     // Guard against headless/virtualized graphic compositor failures
                 }

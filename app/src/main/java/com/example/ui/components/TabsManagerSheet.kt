@@ -167,7 +167,9 @@ fun TabsManagerScreen(
                                             text = prof.displayName,
                                             fontSize = 12.sp,
                                             fontWeight = if (isProfActive) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (isProfActive) profColor else MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = if (isProfActive) profColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 }

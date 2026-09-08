@@ -86,61 +86,6 @@ class PersistentWebView(context: Context) : WebView(context) {
         }
     }
 
-    override fun onWindowVisibilityChanged(visibility: Int) {
-        try {
-            // When allowBackgroundPlayback is enabled, report View.VISIBLE
-            // to keep HTML5 audio/media engine playing in background without suspension
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.onWindowVisibilityChanged(effectiveVisibility)
-        } catch (e: Throwable) {
-            // Guard against Chromium native compositor edge cases
-        }
-    }
-
-    override fun dispatchVisibilityChanged(changedView: View, visibility: Int) {
-        try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.dispatchVisibilityChanged(changedView, effectiveVisibility)
-        } catch (e: Throwable) { }
-    }
-
-    override fun onVisibilityChanged(changedView: View, visibility: Int) {
-        try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.onVisibilityChanged(changedView, effectiveVisibility)
-        } catch (e: Throwable) { }
-    }
-
-    override fun isShown(): Boolean {
-        return if (allowBackgroundPlayback) true else super.isShown()
-    }
-
-    override fun getVisibility(): Int {
-        return if (allowBackgroundPlayback) View.VISIBLE else super.getVisibility()
-    }
-
-    override fun getWindowVisibility(): Int {
-        return if (allowBackgroundPlayback) View.VISIBLE else super.getWindowVisibility()
-    }
-
-    override fun hasWindowFocus(): Boolean {
-        return if (allowBackgroundPlayback) true else super.hasWindowFocus()
-    }
-
-    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else hasWindowFocus
-            super.onWindowFocusChanged(effectiveFocus)
-        } catch (e: Throwable) { }
-    }
-
-    override fun dispatchWindowFocusChanged(hasFocus: Boolean) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else hasFocus
-            super.dispatchWindowFocusChanged(effectiveFocus)
-        } catch (e: Throwable) { }
-    }
-
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {
@@ -225,11 +170,7 @@ fun WebViewContainer(
     val effectiveDark = enableWebDarkMode || isDarkTheme
 
     val activePreset = remember(currentProfile?.fingerprintPreset) {
-        try {
-            FingerprintPreset.valueOf(currentProfile?.fingerprintPreset ?: "DEFAULT")
-        } catch (e: Exception) {
-            FingerprintPreset.DEFAULT
-        }
+        FingerprintPreset.fromString(currentProfile?.fingerprintPreset)
     }
 
     val activeSearchEngine = viewModel.searchEngine.collectAsState().value
@@ -372,7 +313,9 @@ fun WebViewContainer(
                         this.allowBackgroundPlayback = false
                     }
                     stopLoading()
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean = true
+                    }
                     webChromeClient = WebChromeClient()
                     clearHistory()
                     (parent as? ViewGroup)?.removeView(this)
@@ -612,6 +555,13 @@ fun WebViewContainer(
                                     val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
+
+                                if (activePreset != FingerprintPreset.DEFAULT) {
+                                    try {
+                                        val script = FingerprintScriptGenerator.generateInjectionScript(activePreset)
+                                        view?.evaluateJavascript(script, null)
+                                    } catch (e: Exception) { }
+                                }
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
@@ -650,8 +600,17 @@ fun WebViewContainer(
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
 
-                                // Inject Background Audio/Video playback script (YouTube, SoundCloud, etc.)
-                                if (enableBackgroundPlay) {
+                                // Inject Background Audio/Video playback script only on media platforms (YouTube, SoundCloud, Vimeo, etc.)
+                                val targetUrl = url ?: view?.url
+                                val isMediaSite = targetUrl?.let { u ->
+                                    val lower = u.lowercase()
+                                    lower.contains("youtube.com") || lower.contains("youtu.be") ||
+                                    lower.contains("soundcloud.com") || lower.contains("spotify.com") ||
+                                    lower.contains("vimeo.com") || lower.contains("twitch.tv") ||
+                                    lower.contains("dailymotion.com")
+                                } ?: false
+
+                                if (enableBackgroundPlay && isMediaSite) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
@@ -788,9 +747,15 @@ fun WebViewContainer(
                                 val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
                                 val popupWebView = WebView(view?.context ?: ctx).apply {
                                     webViewClient = object : WebViewClient() {
+                                        override fun onRenderProcessGone(v: WebView?, detail: RenderProcessGoneDetail?): Boolean {
+                                            try { v?.destroy() } catch (e: Exception) { }
+                                            return true
+                                        }
+
                                         override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
                                             val targetUrl = request?.url?.toString() ?: return false
                                             viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
+                                            try { v?.destroy() } catch (e: Exception) { }
                                             return true
                                         }
                                         @Deprecated("Deprecated in Java")
@@ -798,6 +763,7 @@ fun WebViewContainer(
                                             if (!targetUrl.isNullOrBlank()) {
                                                 viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
                                             }
+                                            try { v?.destroy() } catch (e: Exception) { }
                                             return true
                                         }
                                     }

@@ -148,12 +148,18 @@ fun ProfileManagerDialog(
                                 Spacer(modifier = Modifier.width(12.dp))
 
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
                                         Text(
-                                            text = profile.displayName,
-                                            fontSize = 15.sp,
+                                            text = formatProfileName(profile.displayName),
+                                            fontSize = if (profile.displayName.length > 20) 13.5.sp else 15.sp,
                                             fontWeight = FontWeight.SemiBold,
-                                            color = MaterialTheme.colorScheme.onSurface
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f, fill = false)
                                         )
                                         if (isCurrent) {
                                             Spacer(modifier = Modifier.width(6.dp))
@@ -419,11 +425,22 @@ fun CreateProfileDialog(
             ) {
                 OutlinedTextField(
                     value = profileName,
-                    onValueChange = { profileName = it },
+                    onValueChange = {
+                        if (it.length <= 32) {
+                            profileName = it.replace("\\s+".toRegex(), " ")
+                        }
+                    },
                     label = { Text("Profile Name") },
                     placeholder = { Text("e.g., Dev, Travel, Banking") },
                     singleLine = true,
                     shape = RoundedCornerShape(12.dp),
+                    supportingText = {
+                        Text(
+                            text = "${profileName.length}/32",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -559,3 +576,16 @@ fun CreateProfileDialog(
         }
     )
 }
+
+/**
+ * Auto-formats profile display names to keep them clean and prevent excessive vertical wrapping.
+ */
+private fun formatProfileName(raw: String): String {
+    val cleaned = raw.trim().replace("\\s+".toRegex(), " ")
+    return if (cleaned.length > 24) {
+        cleaned.take(22).trimEnd() + "…"
+    } else {
+        cleaned
+    }
+}
+

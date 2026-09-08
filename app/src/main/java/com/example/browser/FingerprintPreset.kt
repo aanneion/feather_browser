@@ -2,6 +2,9 @@ package com.example.browser
 
 /**
  * Built-in fingerprint presets that profile identities can impersonate.
+ * All presets use authentic Chromium/Chrome device identities to ensure 100%
+ * consistency between the browser engine (Blink/V8) and the User-Agent / Client Hints,
+ * preventing bot-detection and security checks on modern web platforms (like Reddit, Cloudflare).
  */
 enum class FingerprintPreset(
     val displayName: String,
@@ -10,7 +13,8 @@ enum class FingerprintPreset(
     val platform: String,
     val vendor: String,
     val hardwareConcurrency: Int,
-    val deviceMemory: Int
+    val deviceMemory: Int,
+    val isMobile: Boolean = false
 ) {
     DEFAULT(
         displayName = "Native Mobile (Android)",
@@ -19,51 +23,69 @@ enum class FingerprintPreset(
         platform = "Linux armv8l",
         vendor = "Google Inc.",
         hardwareConcurrency = 8,
-        deviceMemory = 8
+        deviceMemory = 8,
+        isMobile = true
     ),
     WINDOWS_DESKTOP(
-        displayName = "Windows Desktop (Chrome)",
-        description = "Emulates high-spec Windows 11 Desktop workstation",
-        userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        displayName = "Windows 11 Workstation (Chrome)",
+        description = "High-spec Windows 11 desktop running Google Chrome",
+        userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         platform = "Win32",
         vendor = "Google Inc.",
         hardwareConcurrency = 16,
-        deviceMemory = 16
+        deviceMemory = 16,
+        isMobile = false
     ),
     MAC_DESKTOP(
-        displayName = "macOS Workstation (Safari)",
-        description = "Emulates Apple Silicon Mac running macOS Sequoia",
-        userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+        displayName = "macOS Sequoia (Chrome)",
+        description = "Apple Silicon Mac running Google Chrome desktop",
+        userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         platform = "MacIntel",
-        vendor = "Apple Computer, Inc.",
+        vendor = "Google Inc.",
         hardwareConcurrency = 12,
-        deviceMemory = 16
+        deviceMemory = 16,
+        isMobile = false
     ),
     IPHONE_SAFARI(
-        displayName = "iPhone iOS (Safari)",
-        description = "Emulates iPhone 16 Pro running iOS 18",
-        userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1",
-        platform = "iPhone",
-        vendor = "Apple Computer, Inc.",
-        hardwareConcurrency = 6,
-        deviceMemory = 6
+        displayName = "Samsung Galaxy S24 Ultra",
+        description = "Modern flagship Samsung mobile Chrome identity",
+        userAgent = "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        platform = "Linux armv8l",
+        vendor = "Google Inc.",
+        hardwareConcurrency = 8,
+        deviceMemory = 12,
+        isMobile = true
     ),
     LINUX_WORKSTATION(
-        displayName = "Linux Workstation (Firefox)",
-        description = "Emulates privacy-focused Linux desktop environment",
-        userAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
+        displayName = "Linux Workstation (Chrome)",
+        description = "Clean Linux x86_64 desktop running Google Chrome",
+        userAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         platform = "Linux x86_64",
-        vendor = "",
+        vendor = "Google Inc.",
         hardwareConcurrency = 8,
-        deviceMemory = 8
+        deviceMemory = 8,
+        isMobile = false
     ),
     ANONYMOUS_STEALTH(
-        displayName = "Stealth Anonymous (Resistant)",
-        description = "Active canvas & hardware noise injection with spoofed headers",
-        userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-        platform = "Win32",
-        vendor = "",
-        hardwareConcurrency = 4,
-        deviceMemory = 4
-    )
+        displayName = "Google Pixel 9 Pro",
+        description = "Pure Google Pixel Android 15 mobile Chrome identity",
+        userAgent = "Mozilla/5.0 (Linux; Android 15; Pixel 9 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+        platform = "Linux aarch64",
+        vendor = "Google Inc.",
+        hardwareConcurrency = 8,
+        deviceMemory = 16,
+        isMobile = true
+    );
+
+    companion object {
+        fun fromString(name: String?): FingerprintPreset {
+            if (name.isNullOrBlank()) return DEFAULT
+            return try {
+                valueOf(name)
+            } catch (e: Exception) {
+                DEFAULT
+            }
+        }
+    }
 }
+
