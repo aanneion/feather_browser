@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.view.ContextThemeWrapper
 import android.annotation.SuppressLint
 import android.content.res.Configuration
 import android.graphics.Bitmap
@@ -44,6 +45,12 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
+
+    init {
+        if (com.example.browser.DeviceUtils.needsSoftwareRendering) {
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        }
+    }
 
     private var touchStartY = 0f
     private var lastTouchY = 0f
@@ -137,17 +144,6 @@ class PersistentWebView(context: Context) : WebView(context) {
             val effectiveFocus = if (allowBackgroundPlayback) true else hasFocus
             super.dispatchWindowFocusChanged(effectiveFocus)
         } catch (e: Throwable) { }
-    }
-
-    override fun onFocusChanged(focused: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
-        try {
-            val effectiveFocus = if (allowBackgroundPlayback) true else focused
-            super.onFocusChanged(effectiveFocus, direction, previouslyFocusedRect)
-        } catch (e: Throwable) { }
-    }
-
-    override fun hasFocus(): Boolean {
-        return if (allowBackgroundPlayback) true else super.hasFocus()
     }
 
     override fun onPause() {
@@ -389,6 +385,9 @@ fun WebViewContainer(
             AndroidView<SwipeRefreshLayout>(
                 factory = { ctx ->
                     val swipeRefresh = SwipeRefreshLayout(ctx).apply {
+                        if (com.example.browser.DeviceUtils.needsSoftwareRendering) {
+                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                        }
                         isNestedScrollingEnabled = true
                         visibility = View.VISIBLE
                         isEnabled = (customVideoView == null) && isActive
@@ -402,7 +401,18 @@ fun WebViewContainer(
                         setProgressBackgroundColorSchemeColor(progressBgColor)
                     }
 
-                    val webView = PersistentWebView(ctx).apply {
+                    val overrideConfig = Configuration(ctx.resources.configuration)
+                    overrideConfig.uiMode = if (effectiveDark) {
+                        (overrideConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
+                    } else {
+                        (overrideConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_NO
+                    }
+                    val themedContext = ContextThemeWrapper(
+                        ctx.createConfigurationContext(overrideConfig),
+                        if (effectiveDark) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light
+                    )
+
+                    val webView = PersistentWebView(themedContext).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
                         isFocusable = true
                         isFocusableInTouchMode = true
@@ -422,7 +432,7 @@ fun WebViewContainer(
 
                         // Use software layer on emulators without host DRM rendernode (/dev/dri/renderD*)
                         // or after a render process crash to avoid Mesa EGL failures.
-                        if (com.example.browser.DeviceUtils.isEmulator || renderCrashCount > 0) {
+                        if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
                             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
                         } else {
                             setLayerType(View.LAYER_TYPE_NONE, null)
@@ -606,15 +616,19 @@ fun WebViewContainer(
                                     } catch (e: Exception) { }
                                 }
 
-                                // Enforce CSS color-scheme matching browser theme mode
-                                val colorScheme = if (effectiveDark) "dark" else "light"
+                                // Enforce CSS and JS color-scheme matching browser theme mode
                                 try {
-                                    view?.evaluateJavascript("try { document.documentElement.style.colorScheme = '$colorScheme'; } catch(e){}", null)
+                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+                                    view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
                             }
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
                                 super.onPageCommitVisible(view, url)
+                                try {
+                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+                                    view?.evaluateJavascript(themeScript, null)
+                                } catch (e: Exception) { }
                                 if (enableBackgroundPlay) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
@@ -668,6 +682,12 @@ fun WebViewContainer(
                                         view?.evaluateJavascript(script, null)
                                     } catch (e: Exception) { }
                                 }
+
+                                // Enforce theme styling on page finish
+                                try {
+                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+                                    view?.evaluateJavascript(themeScript, null)
+                                } catch (e: Exception) { }
 
                                 // Inject Background Audio/Video playback script (YouTube, SoundCloud, etc.)
                                 if (enableBackgroundPlay) {
@@ -938,6 +958,13 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
 
+                    // Maintain software layer on emulators to prevent Mesa EGL crashes
+                    if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
+                        if (webView.layerType != View.LAYER_TYPE_SOFTWARE) {
+                            webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                        }
+                    }
+
                     // Pull-to-refresh enabled unless custom video view is active, and only for active tab
                     swipeRefresh.isEnabled = (customVideoView == null) && isActive
 
@@ -955,10 +982,14 @@ fun WebViewContainer(
                             if (effectiveDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
                         )
                     }
-                    if (effectiveDark && WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
+                    if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
                         WebSettingsCompat.setForceDarkStrategy(
                             webView.settings,
-                            WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
+                            if (effectiveDark) {
+                                WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
+                            } else {
+                                WebSettingsCompat.DARK_STRATEGY_WEB_THEME_DARKENING_ONLY
+                            }
                         )
                     }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -966,6 +997,12 @@ fun WebViewContainer(
                     } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
                         WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, effectiveDark)
                     }
+
+                    // Dynamically update page theme script
+                    try {
+                        val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+                        webView.evaluateJavascript(themeScript, null)
+                    } catch (e: Exception) { }
 
                     if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
                         val cur = webView.url ?: ""
@@ -980,7 +1017,13 @@ fun WebViewContainer(
             // Fullscreen Video overlay
             if (customVideoView != null) {
                 AndroidView(
-                    factory = { customVideoView!! },
+                    factory = {
+                        customVideoView!!.apply {
+                            if (com.example.browser.DeviceUtils.needsSoftwareRendering || renderCrashCount > 0) {
+                                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                            }
+                        }
+                    },
                     modifier = Modifier
                         .fillMaxSize()
                         .background(androidx.compose.ui.graphics.Color.Black)

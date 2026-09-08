@@ -34,7 +34,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        initializeWebViewDirectories()
+        if (!com.example.browser.DeviceUtils.needsSoftwareRendering) {
+            window.setFlags(
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                android.view.WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED
+            )
+        }
         enableEdgeToEdge()
         enableHighRefreshRate()
 
@@ -64,21 +69,6 @@ class MainActivity : ComponentActivity() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        }
-    }
-
-    private fun initializeWebViewDirectories() {
-        try {
-            val cacheDir = applicationContext.cacheDir
-            val webViewCache = java.io.File(cacheDir, "WebView/Default/HTTP Cache")
-            val codeCacheJs = java.io.File(webViewCache, "Code Cache/js")
-            val codeCacheWasm = java.io.File(webViewCache, "Code Cache/wasm")
-            val indexDir = java.io.File(webViewCache, "index-dir")
-            codeCacheJs.mkdirs()
-            codeCacheWasm.mkdirs()
-            indexDir.mkdirs()
-        } catch (e: Throwable) {
-            // Safe fallback
         }
     }
 

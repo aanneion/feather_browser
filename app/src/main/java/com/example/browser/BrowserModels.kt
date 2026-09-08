@@ -159,15 +159,73 @@ object DeviceUtils {
         val brand = android.os.Build.BRAND.lowercase()
         val device = android.os.Build.DEVICE.lowercase()
         val product = android.os.Build.PRODUCT.lowercase()
+        val board = android.os.Build.BOARD.lowercase()
+        val manufacturer = android.os.Build.MANUFACTURER.lowercase()
+        val abis = android.os.Build.SUPPORTED_ABIS.map { it.lowercase() }
+        val isX86 = abis.any { it.contains("x86") }
 
         fingerprint.startsWith("generic")
             || fingerprint.startsWith("unknown")
+            || (fingerprint.contains("test-keys") && (isX86 || brand.contains("google")))
             || model.contains("google_sdk")
             || model.contains("emulator")
             || model.contains("android sdk built for")
+            || model.contains("cuttlefish")
+            || model.contains("sdk_gphone")
+            || model.contains("subsystem for android")
             || hardware.contains("goldfish")
             || hardware.contains("ranchu")
+            || hardware.contains("cutf")
+            || hardware.contains("cuttlefish")
+            || hardware.contains("vbox")
+            || hardware.contains("qemu")
+            || hardware.contains("virtio")
+            || (hardware.contains("intel") && isX86)
             || (brand.startsWith("generic") && device.startsWith("generic"))
             || product.contains("sdk")
+            || product.contains("cf_")
+            || product.contains("cuttlefish")
+            || product.contains("vbox")
+            || product.contains("emulator")
+            || device.contains("vsoc")
+            || device.contains("cuttlefish")
+            || board.contains("cutf")
+            || board.contains("vsoc")
+            || board.contains("goldfish")
+            || manufacturer.contains("genymotion")
+            || isX86
+    }
+
+    val hasDrmRenderNode: Boolean by lazy {
+        try {
+            val renderNode = java.io.File("/dev/dri/renderD128")
+            if (renderNode.exists() && renderNode.canRead()) return@lazy true
+            val dri = java.io.File("/dev/dri")
+            if (dri.exists() && dri.isDirectory) {
+                val list = dri.listFiles()
+                return@lazy !list.isNullOrEmpty() && list.any { it.name.startsWith("renderD") && it.canRead() }
+            }
+            false
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    val isDrmSystemWithoutRenderNode: Boolean by lazy {
+        try {
+            val dri = java.io.File("/dev/dri")
+            dri.exists() && !hasDrmRenderNode
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Determines whether WebView should use software rendering (LAYER_TYPE_SOFTWARE)
+     * to prevent Mesa driver crashes and "Failed to open rendernode" errors in emulators
+     * and virtualized environments where host DRM graphics devices are absent or restricted.
+     */
+    val needsSoftwareRendering: Boolean by lazy {
+        isEmulator || isDrmSystemWithoutRenderNode
     }
 }

@@ -98,17 +98,18 @@ object FingerprintScriptGenerator {
                     Document.prototype.hasFocus = function() { return true; };
                 } catch(e) {}
 
-                // 2. Prevent YouTube from auto-pausing on tab change: intercept visibilitychange and pagehide
+                // 2. Prevent YouTube from auto-pausing on tab change / backgrounding
+                const blockedEvents = ['visibilitychange', 'webkitvisibilitychange', 'pagehide', 'blur', 'focusout', 'freeze'];
                 try {
                     const origAddEventListener = EventTarget.prototype.addEventListener;
                     EventTarget.prototype.addEventListener = function(type, listener, options) {
-                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
+                        if (typeof type === 'string' && blockedEvents.indexOf(type.toLowerCase()) !== -1) {
                             return;
                         }
                         return origAddEventListener.apply(this, arguments);
                     };
 
-                    ['visibilitychange', 'webkitvisibilitychange', 'pagehide'].forEach(function(evt) {
+                    blockedEvents.forEach(function(evt) {
                         window.addEventListener(evt, function(e) {
                             if (e && e.stopImmediatePropagation) e.stopImmediatePropagation();
                             if (e && e.stopPropagation) e.stopPropagation();
@@ -118,7 +119,50 @@ object FingerprintScriptGenerator {
                             if (e && e.stopPropagation) e.stopPropagation();
                         }, true);
                     });
+
+                    try {
+                        Object.defineProperty(window, 'onblur', { get: function() { return null; }, set: function(v) {}, configurable: true });
+                        Object.defineProperty(window, 'onpagehide', { get: function() { return null; }, set: function(v) {}, configurable: true });
+                        Object.defineProperty(document, 'onvisibilitychange', { get: function() { return null; }, set: function(v) {}, configurable: true });
+                    } catch(e) {}
                 } catch(e) {}
+
+                // Track genuine user interaction vs automatic tab-switch pause
+                let isUserAction = false;
+                let userInteractionTimer = null;
+                let programmaticPauseAllowed = false;
+
+                function markUserAction() {
+                    isUserAction = true;
+                    if (userInteractionTimer) clearTimeout(userInteractionTimer);
+                    userInteractionTimer = setTimeout(function() {
+                        isUserAction = false;
+                    }, 1000);
+                }
+
+                ['click', 'pointerdown', 'touchend', 'keydown'].forEach(function(evt) {
+                    window.addEventListener(evt, markUserAction, true);
+                    document.addEventListener(evt, markUserAction, true);
+                });
+
+                // Wrap HTMLMediaElement pause to prevent unwanted tab switch pauses
+                const origPlay = HTMLMediaElement.prototype.play;
+                const origPause = HTMLMediaElement.prototype.pause;
+                HTMLMediaElement.prototype.pause = function() {
+                    if (programmaticPauseAllowed || isUserAction) {
+                        return origPause.apply(this, arguments);
+                    }
+                    // Auto-pause detected from background/tab switch; immediately resume playback
+                    const media = this;
+                    origPause.apply(this, arguments);
+                    setTimeout(function() {
+                        if (!programmaticPauseAllowed && !isUserAction && media.paused && !media.ended) {
+                            try {
+                                origPlay.call(media).catch(function() {});
+                            } catch(e) {}
+                        }
+                    }, 40);
+                };
 
                 // 3. Spoof IntersectionObserver for video / player elements so YouTube mobile doesn't pause when offscreen
                 try {
@@ -303,32 +347,33 @@ object FingerprintScriptGenerator {
                 };
 
                 window.__feather_media_pause = function() {
+                    programmaticPauseAllowed = true;
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['pause'] === 'function') {
                             window.__feather_actions['pause']();
-                            return;
                         }
                     } catch(e) {}
                     try {
                         const moviePlayer = document.getElementById('movie_player');
                         if (moviePlayer && typeof moviePlayer.pauseVideo === 'function') {
                             moviePlayer.pauseVideo();
-                            return;
                         }
                     } catch(e) {}
                     try {
                         const pauseBtn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, ytm-custom-control-button, [aria-label*="Pause"]');
                         if (pauseBtn) {
                             pauseBtn.click();
-                            return;
                         }
                     } catch(e) {}
                     try {
                         const mediaEls = document.querySelectorAll('video, audio');
                         mediaEls.forEach(function(m) {
-                            if (!m.paused) m.pause();
+                            if (!m.paused) origPause.call(m);
                         });
                     } catch(e) {}
+                    setTimeout(function() {
+                        programmaticPauseAllowed = false;
+                    }, 400);
                 };
 
                 window.__feather_media_toggle = function() {
@@ -444,6 +489,60 @@ object FingerprintScriptGenerator {
                 };
                 setInterval(monitorMedia, 800);
                 monitorMedia();
+            } catch(e) {}
+        })();
+        """.trimIndent()
+    }
+
+    /**
+     * Injects CSS and JS overrides to ensure websites adhere to the browser's theme setting
+     * (e.g. Light mode when selected, preventing unwanted dark mode detection).
+     */
+    fun generateThemeScript(isDark: Boolean): String {
+        val targetScheme = if (isDark) "dark" else "light"
+        return """
+        (function() {
+            try {
+                const targetScheme = '$targetScheme';
+                const isDark = $isDark;
+
+                // 1. Set documentElement color-scheme
+                if (document.documentElement) {
+                    document.documentElement.style.colorScheme = targetScheme;
+                }
+
+                // 2. Add or update meta color-scheme tag
+                let meta = document.querySelector('meta[name="color-scheme"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'color-scheme';
+                    if (document.head) document.head.appendChild(meta);
+                }
+                if (meta) {
+                    meta.content = targetScheme;
+                }
+
+                // 3. Spoof window.matchMedia for prefers-color-scheme media queries
+                const origMatchMedia = window.matchMedia;
+                window.matchMedia = function(query) {
+                    if (!query) return origMatchMedia ? origMatchMedia.call(window, query) : null;
+                    const q = String(query).toLowerCase();
+                    if (q.indexOf('prefers-color-scheme') !== -1) {
+                        const matches = isDark ? (q.indexOf('dark') !== -1) : (q.indexOf('light') !== -1);
+                        const mql = origMatchMedia ? origMatchMedia.call(window, query) : {};
+                        return {
+                            matches: matches,
+                            media: query,
+                            onchange: null,
+                            addListener: function(fn) { if (mql && mql.addListener) mql.addListener(fn); },
+                            removeListener: function(fn) { if (mql && mql.removeListener) mql.removeListener(fn); },
+                            addEventListener: function(type, fn, opt) { if (mql && mql.addEventListener) mql.addEventListener(type, fn, opt); },
+                            removeEventListener: function(type, fn, opt) { if (mql && mql.removeEventListener) mql.removeEventListener(type, fn, opt); },
+                            dispatchEvent: function(e) { return mql && mql.dispatchEvent ? mql.dispatchEvent(e) : true; }
+                        };
+                    }
+                    return origMatchMedia ? origMatchMedia.call(window, query) : null;
+                };
             } catch(e) {}
         })();
         """.trimIndent()

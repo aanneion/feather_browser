@@ -41,7 +41,11 @@ class PrivacyManager(private val context: Context, private val database: AppData
             withContext(Dispatchers.Main) {
                 try {
                     // Clear WebView cache on main thread safely
-                    val dummyWebView = WebView(context)
+                    val dummyWebView = WebView(context).apply {
+                        if (com.example.browser.DeviceUtils.needsSoftwareRendering) {
+                            setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+                        }
+                    }
                     dummyWebView.clearCache(true)
                     dummyWebView.destroy()
                 } catch (e: Throwable) {

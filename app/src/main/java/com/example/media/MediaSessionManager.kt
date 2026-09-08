@@ -92,6 +92,20 @@ object MediaSessionManager {
             return
         }
 
+        if (playing) {
+            val prevTabId = _activeMediaTabId.value
+            if (prevTabId != null && prevTabId != tabId) {
+                // Another tab has started playing media! Pause the previous tab so sound sources don't overlap
+                val prevWebView = webViewRegistry[prevTabId]?.get()
+                prevWebView?.post {
+                    prevWebView.evaluateJavascript(
+                        "if (typeof window.__feather_media_pause === 'function') { window.__feather_media_pause(); }",
+                        null
+                    )
+                }
+            }
+        }
+
         _isPlaying.value = playing
         _activeMediaTabId.value = tabId
 
