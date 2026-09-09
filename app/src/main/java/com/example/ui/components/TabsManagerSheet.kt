@@ -65,11 +65,11 @@ fun TabsManagerScreen(
 
     val listState = rememberLazyListState()
 
-    // Scroll to active tab on open
-    LaunchedEffect(activeTabId) {
+    // Scroll to active tab on open once without jumping on tab closure
+    LaunchedEffect(Unit) {
         val activeIndex = tabs.indexOfFirst { it.id == activeTabId }
         if (activeIndex >= 0) {
-            listState.animateScrollToItem(activeIndex)
+            listState.scrollToItem(activeIndex)
         }
     }
 
@@ -508,29 +508,29 @@ fun DownsideTabCard(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Close tab button with dedicated 36dp touch target and clear hit boundary
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                // Close tab button with dedicated touch target and clear hit boundary
+                IconButton(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onClose()
+                    },
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable(
-                            role = androidx.compose.ui.semantics.Role.Button,
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onClose()
-                            }
-                        )
+                        .size(44.dp)
                         .testTag("close_tab_${tab.id}")
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Close Tab",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.8f),
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Close Tab",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }

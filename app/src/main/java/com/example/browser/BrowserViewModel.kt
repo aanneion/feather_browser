@@ -642,6 +642,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun closeTab(tabId: String) {
         viewModelScope.launch {
+            val allTabs = currentTabs.value
+            val closedIndex = allTabs.indexOfFirst { it.id == tabId }
             repository.deleteTab(tabId)
             ContentBlocker.resetTabBlockCount(tabId)
             try {
@@ -649,10 +651,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     com.example.media.MediaSessionManager.onMediaEnded(context, tabId)
                 }
             } catch (e: Throwable) { }
-            val remaining = currentTabs.value.filter { it.id != tabId }
+            val remaining = allTabs.filter { it.id != tabId }
             if (remaining.isNotEmpty()) {
                 if (_activeTabId.value == tabId) {
-                    selectTab(remaining.first().id, autoDismiss = false)
+                    val nextIndex = (if (closedIndex >= 0) closedIndex else 0)
+                        .coerceAtMost(remaining.size - 1)
+                    selectTab(remaining[nextIndex].id, autoDismiss = false)
                 }
             } else {
                 createNewTab(isPrivate = _isPrivateMode.value, autoDismiss = false)

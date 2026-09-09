@@ -43,13 +43,12 @@ class BrowserApplication : Application() {
     }
 
     private fun configureGraphicsEnvironment() {
-        // In containerized and virtualized emulator environments without hardware DRI rendernodes (/dev/dri/renderD128),
-        // silence Mesa debug logging and instruct the loader to use software rasterization.
+        // In containerized and virtualized emulator environments, silence Mesa debug logging
         try {
             Os.setenv("MESA_DEBUG", "silent", true)
             Os.setenv("MESA_LOG_FILE", "/dev/null", true)
-            Os.setenv("LIBGL_ALWAYS_SOFTWARE", "1", true)
-            Os.setenv("GALLIUM_DRIVER", "llvmpipe", true)
+            Os.unsetenv("GALLIUM_DRIVER")
+            Os.unsetenv("LIBGL_ALWAYS_SOFTWARE")
         } catch (e: Throwable) { }
     }
 }

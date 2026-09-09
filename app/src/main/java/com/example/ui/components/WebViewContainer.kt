@@ -88,6 +88,27 @@ class PersistentWebView(context: Context) : WebView(context) {
         }
     }
 
+    override fun onVisibilityChanged(changedView: View, visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            super.onVisibilityChanged(changedView, effectiveVisibility)
+        } catch (e: Throwable) { }
+    }
+
+    override fun onWindowVisibilityChanged(visibility: Int) {
+        try {
+            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
+            super.onWindowVisibilityChanged(effectiveVisibility)
+        } catch (e: Throwable) { }
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        if (allowBackgroundPlayback && w <= 0 && h <= 0 && ow > 0 && oh > 0) {
+            return
+        }
+        super.onSizeChanged(w, h, ow, oh)
+    }
+
     override fun onPause() {
         if (!allowBackgroundPlayback) {
             try {
@@ -332,12 +353,13 @@ fun WebViewContainer(
         Box(
             modifier = modifier
                 .fillMaxSize()
-                .then(if (isActive) Modifier else Modifier.size(0.dp))
                 .background(MaterialTheme.colorScheme.background)
         ) {
             AndroidView<SwipeRefreshLayout>(
                 factory = { ctx ->
-                    val swipeRefresh = SwipeRefreshLayout(ctx).apply {
+                    // Direct Activity reference so WebView retains a valid WindowManager token for HTML <select> dropdowns and dialogs
+                    val activity = ctx.findActivity() ?: ctx
+                    val swipeRefresh = SwipeRefreshLayout(activity).apply {
                         isNestedScrollingEnabled = true
                         visibility = if (isActive) View.VISIBLE else View.GONE
                         isEnabled = (customVideoView == null) && isActive
@@ -351,14 +373,7 @@ fun WebViewContainer(
                         setProgressBackgroundColorSchemeColor(progressBgColor)
                     }
 
-                    // Wrap the Activity context directly so WebView retains a valid WindowManager token for HTML <select> dropdowns and dialogs
-                    val activity = ctx.findActivity() ?: ctx
-                    val themedContext = ContextThemeWrapper(
-                        activity,
-                        if (effectiveDark) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light
-                    )
-
-                    val webView = PersistentWebView(themedContext).apply {
+                    val webView = PersistentWebView(activity).apply {
                         allowBackgroundPlayback = enableBackgroundPlay
                         isFocusable = true
                         isFocusableInTouchMode = true
@@ -591,17 +606,8 @@ fun WebViewContainer(
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
 
-                                // Inject Background Audio/Video playback script only on media platforms (YouTube, SoundCloud, Vimeo, etc.)
-                                val targetUrl = url ?: view?.url
-                                val isMediaSite = targetUrl?.let { u ->
-                                    val lower = u.lowercase()
-                                    lower.contains("youtube.com") || lower.contains("youtu.be") ||
-                                    lower.contains("soundcloud.com") || lower.contains("spotify.com") ||
-                                    lower.contains("vimeo.com") || lower.contains("twitch.tv") ||
-                                    lower.contains("dailymotion.com")
-                                } ?: false
-
-                                if (enableBackgroundPlay && isMediaSite) {
+                                // Inject Background Audio/Video playback script on media sites or whenever background play is enabled
+                                if (enableBackgroundPlay) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
