@@ -402,26 +402,6 @@ fun DownsideTabCard(
             .fillMaxHeight()
             .offset { IntOffset(0, animatedOffsetY.roundToInt()) }
             .graphicsLayer { alpha = cardAlpha }
-            .pointerInput(tab.id) {
-                detectVerticalDragGestures(
-                    onDragEnd = {
-                        if (abs(offsetY) > 160f) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onClose()
-                        } else {
-                            offsetY = 0f
-                        }
-                    },
-                    onDragCancel = {
-                        offsetY = 0f
-                    },
-                    onVerticalDrag = { change, dragAmount ->
-                        change.consume()
-                        offsetY += dragAmount
-                    }
-                )
-            }
-            .clickable(onClick = onClick)
             .testTag("tab_card_${tab.id}")
     ) {
         Column(
@@ -451,90 +431,113 @@ fun DownsideTabCard(
                     .fillMaxWidth()
                     .padding(horizontal = 4.dp, vertical = 2.dp)
             ) {
-                // Site Icon Badge
-                Surface(
-                    shape = CircleShape,
-                    color = when {
-                        isYouTube -> Color(0xFFFF0000).copy(alpha = 0.15f)
-                        isHome -> profileColor.copy(alpha = 0.15f)
-                        else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                    },
-                    modifier = Modifier.size(24.dp)
+                // Tapping badge or title selects this tab
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onClick)
+                        .padding(vertical = 4.dp, horizontal = 2.dp)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        when {
-                            isYouTube -> {
-                                Icon(
-                                    imageVector = Icons.Filled.PlayArrow,
-                                    contentDescription = null,
-                                    tint = Color(0xFFFF0000),
-                                    modifier = Modifier.size(15.dp)
-                                )
-                            }
-                            isHome -> {
-                                Icon(
-                                    imageVector = Icons.Default.Home,
-                                    contentDescription = null,
-                                    tint = profileColor,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                            }
-                            tab.isPrivate -> {
-                                Icon(
-                                    imageVector = Icons.Default.VpnKey,
-                                    contentDescription = null,
-                                    tint = Color(0xFF9333EA),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                            }
-                            else -> {
-                                Text(
-                                    text = domain.firstOrNull()?.uppercase() ?: "W",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                    // Site Icon Badge
+                    Surface(
+                        shape = CircleShape,
+                        color = when {
+                            isYouTube -> Color(0xFFFF0000).copy(alpha = 0.15f)
+                            isHome -> profileColor.copy(alpha = 0.15f)
+                            else -> MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        },
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            when {
+                                isYouTube -> {
+                                    Icon(
+                                        imageVector = Icons.Filled.PlayArrow,
+                                        contentDescription = null,
+                                        tint = Color(0xFFFF0000),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                                isHome -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Home,
+                                        contentDescription = null,
+                                        tint = profileColor,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                                tab.isPrivate -> {
+                                    Icon(
+                                        imageVector = Icons.Default.VpnKey,
+                                        contentDescription = null,
+                                        tint = Color(0xFF9333EA),
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                                else -> {
+                                    Text(
+                                        text = domain.firstOrNull()?.uppercase() ?: "W",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Title
+                    Text(
+                        text = when {
+                            isHome -> "Home"
+                            tab.title.isNotBlank() -> tab.title
+                            else -> domain
+                        },
+                        fontSize = 13.sp,
+                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-                // Title
-                Text(
-                    text = when {
-                        isHome -> "Home"
-                        tab.title.isNotBlank() -> tab.title
-                        else -> domain
-                    },
-                    fontSize = 13.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-
-                // Close tab button
-                IconButton(
-                    onClick = onClose,
+                // Close tab button with dedicated 36dp touch target and clear hit boundary
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
                     modifier = Modifier
-                        .size(24.dp)
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .clickable(
+                            role = androidx.compose.ui.semantics.Role.Button,
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onClose()
+                            }
+                        )
                         .testTag("close_tab_${tab.id}")
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Close Tab",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Close Tab",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Body: High quality preview surface
+            // Body: High quality preview surface (tapping opens tab, swiping vertically dismisses tab)
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surface,
@@ -545,6 +548,27 @@ fun DownsideTabCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .pointerInput(tab.id) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                if (abs(offsetY) > 160f) {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onClose()
+                                } else {
+                                    offsetY = 0f
+                                }
+                            },
+                            onDragCancel = {
+                                offsetY = 0f
+                            },
+                            onVerticalDrag = { change, dragAmount ->
+                                change.consume()
+                                offsetY += dragAmount
+                            }
+                        )
+                    }
+                    .clickable(onClick = onClick)
             ) {
                 if (isHome) {
                     // Mini Home Page representation

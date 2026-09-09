@@ -1,5 +1,7 @@
 package com.example.ui.components
 
+import android.app.Activity
+import android.content.ContextWrapper
 import android.view.ContextThemeWrapper
 import android.annotation.SuppressLint
 import android.content.res.Configuration
@@ -349,14 +351,10 @@ fun WebViewContainer(
                         setProgressBackgroundColorSchemeColor(progressBgColor)
                     }
 
-                    val overrideConfig = Configuration(ctx.resources.configuration)
-                    overrideConfig.uiMode = if (effectiveDark) {
-                        (overrideConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_YES
-                    } else {
-                        (overrideConfig.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or Configuration.UI_MODE_NIGHT_NO
-                    }
+                    // Wrap the Activity context directly so WebView retains a valid WindowManager token for HTML <select> dropdowns and dialogs
+                    val activity = ctx.findActivity() ?: ctx
                     val themedContext = ContextThemeWrapper(
-                        ctx.createConfigurationContext(overrideConfig),
+                        activity,
                         if (effectiveDark) android.R.style.Theme_DeviceDefault else android.R.style.Theme_DeviceDefault_Light
                     )
 
@@ -377,13 +375,6 @@ fun WebViewContainer(
                         // Set opaque background matching current theme to avoid transparent surface compositor overhead
                         val initialBgColor = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
                         setBackgroundColor(initialBgColor)
-
-                        // Use software layer only as a recovery fallback if a render process crash occurred
-                        if (renderCrashCount > 0) {
-                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                        } else {
-                            setLayerType(View.LAYER_TYPE_NONE, null)
-                        }
 
                         // High refresh rate (90Hz/120Hz) nested scrolling optimization
                         isNestedScrollingEnabled = true
@@ -885,16 +876,6 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                     }
 
-                    if (renderCrashCount > 0) {
-                        if (webView.layerType != View.LAYER_TYPE_SOFTWARE) {
-                            webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                        }
-                    } else {
-                        if (webView.layerType != View.LAYER_TYPE_NONE) {
-                            webView.setLayerType(View.LAYER_TYPE_NONE, null)
-                        }
-                    }
-
                     // Pull-to-refresh enabled unless custom video view is active, and only for active tab
                     swipeRefresh.isEnabled = (customVideoView == null) && isActive
 
@@ -935,11 +916,7 @@ fun WebViewContainer(
             if (customVideoView != null) {
                 AndroidView(
                     factory = {
-                        customVideoView!!.apply {
-                            if (renderCrashCount > 0) {
-                                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                            }
-                        }
+                        customVideoView!!
                     },
                     modifier = Modifier
                         .fillMaxSize()
@@ -948,4 +925,10 @@ fun WebViewContainer(
             }
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

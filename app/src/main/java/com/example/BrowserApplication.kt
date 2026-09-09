@@ -7,30 +7,36 @@ import java.io.File
 class BrowserApplication : Application() {
 
     init {
-        // In containerized and virtualized emulator environments without hardware DRI rendernodes (/dev/dri/renderD128),
-        // instruct the Mesa graphics loader to use software rendering directly, avoiding "Failed to open rendernode" errors.
-        try {
-            val hasDri = File("/dev/dri").exists()
-            if (!hasDri) {
-                Os.setenv("LIBGL_ALWAYS_SOFTWARE", "1", true)
-            }
-        } catch (e: Throwable) { }
+        configureGraphicsEnvironment()
+    }
+
+    override fun attachBaseContext(base: android.content.Context?) {
+        super.attachBaseContext(base)
+        configureGraphicsEnvironment()
     }
 
     override fun onCreate() {
         super.onCreate()
+        configureGraphicsEnvironment()
 
-        // Ensure Chromium cache directories exist so simple_file_enumerator won't fail with ENOENT
+        // Clean up any stray directories accidentally placed inside HTTP Cache from prior sessions
+        // so Chromium's SimpleCache index reconstruction will succeed without errors.
         try {
-            val cache = cacheDir
-            val jsCodeCache = File(cache, "WebView/Default/HTTP Cache/Code Cache/js")
-            val wasmCodeCache = File(cache, "WebView/Default/HTTP Cache/Code Cache/wasm")
-            if (!jsCodeCache.exists()) {
-                jsCodeCache.mkdirs()
+            val strayCodeCache = File(cacheDir, "WebView/Default/HTTP Cache/Code Cache")
+            if (strayCodeCache.exists()) {
+                strayCodeCache.deleteRecursively()
             }
-            if (!wasmCodeCache.exists()) {
-                wasmCodeCache.mkdirs()
-            }
+        } catch (e: Throwable) { }
+    }
+
+    private fun configureGraphicsEnvironment() {
+        // In containerized and virtualized emulator environments without hardware DRI rendernodes (/dev/dri/renderD128),
+        // silence Mesa debug logging and instruct the loader to use software rasterization.
+        try {
+            Os.setenv("MESA_DEBUG", "silent", true)
+            Os.setenv("MESA_LOG_FILE", "/dev/null", true)
+            Os.setenv("LIBGL_ALWAYS_SOFTWARE", "1", true)
+            Os.setenv("GALLIUM_DRIVER", "llvmpipe", true)
         } catch (e: Throwable) { }
     }
 }
