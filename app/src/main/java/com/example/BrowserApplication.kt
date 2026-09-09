@@ -19,12 +19,25 @@ class BrowserApplication : Application() {
         super.onCreate()
         configureGraphicsEnvironment()
 
-        // Clean up any stray directories accidentally placed inside HTTP Cache from prior sessions
-        // so Chromium's SimpleCache index reconstruction will succeed without errors.
+        // Pre-create Chromium cache directories so SimpleFileEnumerator and SimpleIndexFile
+        // will find them and open them cleanly without logging opendir ENOENT errors.
         try {
-            val strayCodeCache = File(cacheDir, "WebView/Default/HTTP Cache/Code Cache")
-            if (strayCodeCache.exists()) {
-                strayCodeCache.deleteRecursively()
+            val cache = cacheDir
+            val dirs = listOf(
+                File(cache, "WebView"),
+                File(cache, "WebView/Default"),
+                File(cache, "WebView/Default/HTTP Cache"),
+                File(cache, "WebView/Default/HTTP Cache/Code Cache"),
+                File(cache, "WebView/Default/HTTP Cache/Code Cache/js"),
+                File(cache, "WebView/Default/HTTP Cache/Code Cache/wasm")
+            )
+            for (dir in dirs) {
+                if (!dir.exists()) {
+                    dir.mkdirs()
+                }
+                dir.setReadable(true, false)
+                dir.setWritable(true, false)
+                dir.setExecutable(true, false)
             }
         } catch (e: Throwable) { }
     }
