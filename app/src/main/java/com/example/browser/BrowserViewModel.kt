@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.webkit.URLUtil
+import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -690,7 +691,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun navigateTo(input: String) {
         setBarsVisible(true)
         val parsedUrl = UrlUtils.parseInputToUrl(input, searchEngine.value)
-        if (parsedUrl.isNotBlank()) {
+        val secureUrl = UrlUtils.applyHttpsMode(parsedUrl, httpsMode.value)
+        if (secureUrl == null) {
+            Toast.makeText(context, "HTTPS-only mode blocked this insecure address", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (secureUrl.isNotBlank()) {
             var tabId = _activeTabId.value
             if (tabId.isBlank()) {
                 tabId = UUID.randomUUID().toString()
@@ -701,27 +707,27 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 _activeTabState.value = ActiveTabState(
                     id = tabId,
                     profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
-                    url = parsedUrl,
-                    title = parsedUrl,
+                    url = secureUrl,
+                    title = secureUrl,
                     isPrivate = _isPrivateMode.value,
                     isLoading = true,
                     progress = 10
                 )
             } else {
-                _activeTabState.update { it?.copy(url = parsedUrl, progress = 10, isLoading = true) }
+                _activeTabState.update { it?.copy(url = secureUrl, progress = 10, isLoading = true) }
             }
             viewModelScope.launch {
-                _webViewActionEvent.emit(WebViewAction.LoadUrl(parsedUrl, targetTabId = tabId))
+                _webViewActionEvent.emit(WebViewAction.LoadUrl(secureUrl, targetTabId = tabId))
                 val cur = currentTabs.value.find { it.id == tabId }
                 if (cur != null) {
-                    repository.saveTab(cur.copy(url = parsedUrl, lastAccessedAt = System.currentTimeMillis()))
+                    repository.saveTab(cur.copy(url = secureUrl, lastAccessedAt = System.currentTimeMillis()))
                 } else {
                     repository.saveTab(
                         BrowserTab(
                             id = tabId,
                             profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
-                            url = parsedUrl,
-                            title = parsedUrl,
+                            url = secureUrl,
+                            title = secureUrl,
                             isPrivate = _isPrivateMode.value
                         )
                     )
@@ -1076,6 +1082,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 setMimeType(mimetype)
                 addRequestHeader("User-Agent", userAgent)
+                CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
                 setDescription("Downloading $filename")
                 setTitle(filename)
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)

@@ -60,14 +60,10 @@ class PrivacyManager(private val context: Context, private val database: AppData
     }
 
     /**
-     * Cleans up temporary private browsing session data without affecting normal profiles.
+     * Removes private tab metadata. Android WebView's cookie and storage stores are process-wide,
+     * so clearing them here would also destroy normal-profile sessions.
      */
     suspend fun cleanPrivateSessionData() = withContext(Dispatchers.IO) {
         database.tabDao().deleteAllPrivateTabs()
-        withContext(Dispatchers.Main) {
-            CookieManager.getInstance().removeAllCookies(null)
-            CookieManager.getInstance().flush()
-            WebStorage.getInstance().deleteAllData()
-        }
     }
 }

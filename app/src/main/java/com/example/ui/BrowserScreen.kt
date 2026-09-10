@@ -21,6 +21,7 @@ import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.browser.*
 import com.example.data.model.*
+import com.example.media.MediaSessionManager
 import com.example.ui.components.*
 
 @Composable
@@ -65,6 +66,7 @@ fun BrowserScreen(
     val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
     val adBlockExceptions by viewModel.adBlockExceptions.collectAsStateWithLifecycle()
     val quickShortcuts by viewModel.quickShortcuts.collectAsStateWithLifecycle()
+    val activeMediaTabId by MediaSessionManager.activeMediaTabId.collectAsStateWithLifecycle()
 
     var showMenuSheet by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
@@ -306,21 +308,11 @@ fun BrowserScreen(
                     .padding(top = effectiveTopPadding, bottom = effectiveBottomPadding)
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                val loadedTabIds = remember { mutableStateMapOf<String, Boolean>() }
-                val openTabIdSet = remember(openTabs) { openTabs.map { it.id }.toSet() }
-                LaunchedEffect(openTabIdSet) {
-                    val toRemove = loadedTabIds.keys.filter { it !in openTabIdSet }
-                    toRemove.forEach { loadedTabIds.remove(it) }
-                }
-
-                // Persistent WebViews for open tabs to keep background playback and prevent reloads
+                // WebView is expensive. Retain only the visible tab and the one active media tab;
+                // all other tabs are restored from their persisted URL when selected.
                 for (tab in openTabs) {
                     val isActive = (tab.id == activeTabId && !isHome)
-                    val hasLoadedUrl = tab.url.isNotBlank() && tab.url != "about:blank"
-                    if (isActive || hasLoadedUrl) {
-                        loadedTabIds[tab.id] = true
-                    }
-                    val shouldRender = loadedTabIds[tab.id] == true || isActive
+                    val shouldRender = isActive || (enableBackgroundPlay && tab.id == activeMediaTabId)
                     if (shouldRender) {
                         key(tab.id) {
                             Box(
@@ -340,6 +332,7 @@ fun BrowserScreen(
                                     blockThirdPartyCookies = blockThirdPartyCookies,
                                     enableWebDarkMode = enableWebDarkMode,
                                     enableBackgroundPlay = enableBackgroundPlay,
+                                    httpsMode = httpsMode,
                                     isDarkTheme = isDarkTheme,
                                     currentProfile = currentProfile,
                                     viewModel = viewModel,

@@ -13,6 +13,20 @@ import org.robolectric.annotation.Config
 class ContentBlockerUnitTest {
 
     @Test
+    fun httpsModes_upgradeOrBlockInsecureAddresses() {
+        val insecure = "http://example.com/path"
+        assertEquals("https://example.com/path", com.example.browser.UrlUtils.applyHttpsMode(insecure, com.example.browser.HttpsMode.PREFER_HTTPS))
+        assertNull(com.example.browser.UrlUtils.applyHttpsMode(insecure, com.example.browser.HttpsMode.HTTPS_ONLY))
+        assertEquals(insecure, com.example.browser.UrlUtils.applyHttpsMode(insecure, com.example.browser.HttpsMode.NORMAL))
+    }
+
+    @Test
+    fun httpsModes_leaveSecureAndInternalAddressesUntouched() {
+        assertEquals("https://example.com", com.example.browser.UrlUtils.applyHttpsMode("https://example.com", com.example.browser.HttpsMode.HTTPS_ONLY))
+        assertEquals("about:blank", com.example.browser.UrlUtils.applyHttpsMode("about:blank", com.example.browser.HttpsMode.HTTPS_ONLY))
+    }
+
+    @Test
     fun shouldBlock_knownAdHosts_returnsTrue() {
         val adUri = Uri.parse("https://googleads.g.doubleclick.net/pagead/ads?client=ca-pub")
         assertTrue(ContentBlocker.shouldBlock(adUri, isGlobalBlockerEnabled = true, isSiteWhitelisted = false))

@@ -149,6 +149,16 @@ object UrlUtils {
     fun isHttps(url: String): Boolean {
         return url.startsWith("https://", ignoreCase = true)
     }
+
+    /** Returns null when an HTTP navigation is disallowed by the selected policy. */
+    fun applyHttpsMode(url: String, mode: HttpsMode): String? {
+        if (!url.startsWith("http://", ignoreCase = true)) return url
+        return when (mode) {
+            HttpsMode.NORMAL -> url
+            HttpsMode.PREFER_HTTPS -> "https://" + url.substringAfter("://")
+            HttpsMode.HTTPS_ONLY -> null
+        }
+    }
 }
 
 object DeviceUtils {

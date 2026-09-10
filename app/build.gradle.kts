@@ -22,7 +22,10 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
-  val releaseKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/release.keystore")
+  // A release build must only use credentials injected by the build environment.
+  // Never fall back to a repository key or a known password.
+  val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
+  val releaseKeystore = releaseKeystorePath?.takeIf { it.isNotBlank() }?.let(::file)
   val debugKeystore = file("${rootDir}/debug.keystore")
   signingConfigs {
     create("debugConfig") {
@@ -34,11 +37,11 @@ android {
       }
     }
     create("releaseConfig") {
-      if (releaseKeystore.exists()) {
+      if (releaseKeystore != null && releaseKeystore.exists()) {
         storeFile = releaseKeystore
-        storePassword = System.getenv("STORE_PASSWORD") ?: "feather123"
-        keyAlias = System.getenv("KEY_ALIAS") ?: "feather_release_key"
-        keyPassword = System.getenv("KEY_PASSWORD") ?: "feather123"
+        storePassword = System.getenv("STORE_PASSWORD")
+        keyAlias = System.getenv("KEY_ALIAS")
+        keyPassword = System.getenv("KEY_PASSWORD")
       }
     }
   }
@@ -52,10 +55,10 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro"
       )
-      signingConfig = if (releaseKeystore.exists()) {
+      signingConfig = if (releaseKeystore != null && releaseKeystore.exists()) {
         signingConfigs.getByName("releaseConfig")
       } else {
-        signingConfigs.getByName("debugConfig")
+        null
       }
     }
     debug {

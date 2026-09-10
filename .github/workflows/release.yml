@@ -72,9 +72,10 @@ jobs:
           elif [ -f release.keystore ]; then
             echo "Using existing release.keystore from workspace..."
           else
-            echo "Decoding permanent deterministic release.keystore to guarantee seamless in-place updates..."
-            echo "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" | base64 -d > release.keystore
+            echo "Release signing credentials are not configured."
+            exit 1
           fi
+          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
           if [ ! -f debug.keystore ]; then
             cp release.keystore debug.keystore || true
           fi
@@ -83,6 +84,10 @@ jobs:
         run: chmod +x gradlew
 
       - name: Build Release APK
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseParallelGC" --stacktrace
 
       - name: Prepare Release Assets
@@ -134,5 +139,4 @@ jobs:
             --generate-notes \
             --latest \
             --target "${{ github.sha }}"
-
 

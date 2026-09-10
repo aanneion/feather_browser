@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -23,6 +24,7 @@ object ContentBlocker {
 
     private var browserPreferences: BrowserPreferences? = null
     private val ioScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val persistScheduled = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // Overall persistent blocked items counters (Reactive StateFlows)
     private val _totalBlockedCount = MutableStateFlow(0)
@@ -44,21 +46,15 @@ object ContentBlocker {
         val currentTrackers = _totalTrackersCount.value
         val currentAds = _totalAdsCount.value
 
-        val newTotal = maxOf(savedTotal, savedTotal + currentTotal)
-        val newTrackers = maxOf(savedTrackers, savedTrackers + currentTrackers)
-        val newAds = maxOf(savedAds, savedAds + currentAds)
+        val newTotal = savedTotal + currentTotal
+        val newTrackers = savedTrackers + currentTrackers
+        val newAds = savedAds + currentAds
 
         _totalBlockedCount.value = newTotal
         _totalTrackersCount.value = newTrackers
         _totalAdsCount.value = newAds
 
-        if (currentTotal > 0) {
-            ioScope.launch {
-                preferences.setTotalBlockedCount(newTotal.toLong())
-                preferences.setTotalTrackersBlocked(newTrackers.toLong())
-                preferences.setTotalAdsBlocked(newAds.toLong())
-            }
-        }
+        if (currentTotal > 0) schedulePersist()
     }
 
     fun resetStats() {
@@ -73,11 +69,20 @@ object ContentBlocker {
         val trackers = if (isTracker) _totalTrackersCount.updateAndGet { it + 1 } else _totalTrackersCount.value
         val ads = if (!isTracker) _totalAdsCount.updateAndGet { it + 1 } else _totalAdsCount.value
 
-        val prefs = browserPreferences ?: return
+        schedulePersist()
+    }
+
+    /** Coalesce noisy network events into a single small preferences write. */
+    private fun schedulePersist() {
+        if (!persistScheduled.compareAndSet(false, true)) return
         ioScope.launch {
-            prefs.setTotalBlockedCount(total.toLong())
-            prefs.setTotalTrackersBlocked(trackers.toLong())
-            prefs.setTotalAdsBlocked(ads.toLong())
+            delay(750)
+            browserPreferences?.let { prefs ->
+                prefs.setTotalBlockedCount(_totalBlockedCount.value.toLong())
+                prefs.setTotalTrackersBlocked(_totalTrackersCount.value.toLong())
+                prefs.setTotalAdsBlocked(_totalAdsCount.value.toLong())
+            }
+            persistScheduled.set(false)
         }
     }
 

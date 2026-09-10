@@ -3,7 +3,7 @@
 # 🌐 Feather Browser for Android
 
 <p align="center">
-  <strong>An ultra-lightweight (~1.5 MB), high-performance, privacy-first Android browser featuring true isolated multi-profiles with custom device fingerprint spoofing.</strong>
+  <strong>An ultra-lightweight Android browser with organized browsing profiles, privacy controls, and customizable web identities.</strong>
 </p>
 
 [![Releases](https://img.shields.io/badge/Releases-Latest%20APKs-2563EB?style=for-the-badge&logo=github)](https://github.com/aanneion/feather_browser/releases)
@@ -16,7 +16,7 @@
 
 <br />
 
-[🌟 Core Differentiators](#-core-differentiators) • [🛡️ Multi-Profile Isolation](#-isolated-multi-profiles--fingerprint-spoofing) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source) • [🔑 Release Signing & Updates](#-release-signing--seamless-in-place-updates)
+[🌟 Core Differentiators](#-core-differentiators) • [🛡️ Browsing Profiles](#-browsing-profiles--web-identity-preferences) • [✨ Feature Highlights](#-feature-highlights) • [🛠️ Architecture](#-architecture--tech-stack) • [🚀 Building from Source](#-building-from-source) • [🔑 Release Signing & Updates](#-release-signing--seamless-in-place-updates)
 
 ---
 
@@ -24,7 +24,7 @@
 
 ## 📖 Overview
 
-**Feather Browser** is an open-source, minimalist web browser engineered from the ground up for speed, low resource consumption, and uncompromised privacy. Unlike mainstream mobile browsers that consume hundreds of megabytes of storage and track user activity, Feather Browser compiles into a lean **~1.5 MB APK** while offering desktop-grade features like **Isolated Multi-Profiles**, **Device Fingerprint Spoofing**, a **Built-in Ad & Tracker Blocker**, and **Background YouTube & Media Playback** with lock screen controls.
+**Feather Browser** is an open-source, minimalist Android browser designed for low overhead and practical privacy controls. It offers organized browsing profiles, a built-in ad and tracker blocker, and background web-media playback with lock-screen controls.
 
 Built purely in **Kotlin** and **Jetpack Compose (Material Design 3)**, Feather delivers dynamic Material You theming, instant cold starts, and buttery-smooth 120Hz scrolling.
 
@@ -35,17 +35,17 @@ Built purely in **Kotlin** and **Jetpack Compose (Material Design 3)**, Feather 
 | Unique Capability | Why It Sets Feather Apart |
 | :--- | :--- |
 | 🪶 **Ultra-Lightweight (~1.5 MB)** | 90%+ smaller than standard browsers (Chrome ~150MB, Firefox ~90MB). Stripped of unnecessary bloat, third-party analytics SDKs, and background daemon services. |
-| 👥 **True Multi-Profile Isolation** | Separate browser personas within a single app. Each profile maintains its own dedicated sandbox: independent cookies, localStorage, indexedDB, web cache, tabs, bookmarks, and history. |
-| 🎭 **Hardware & Fingerprint Spoofing** | Each profile can emulate distinct hardware/platform signatures (Windows, macOS Safari, iOS, Linux Firefox, Stealth) to defeat browser fingerprinting and cross-site tracking. |
+| 👥 **Organized Browsing Profiles** | Separate tabs, bookmarks, history, downloads, and shortcuts for personal, work, and testing workflows. |
+| 🎭 **Web Identity Preferences** | Per-profile user-agent and presentation preferences for compatibility testing; these are not anonymity guarantees. |
 | 🎵 **YouTube & Background Media Play** | Seamless background audio playback when screen is locked or browsing other tabs. Full Android `MediaSession` lock screen and notification bar controls. |
 | 🛡️ **Enhanced Ad & YouTube Blocker** | Inbuilt network-level request interceptor and DOM cleaner that removes web trackers, banner ads, and blocks YouTube video prerolls, midrolls, and promoted videos with auto-skipping. |
 | ⚡ **Instant Cold Boot & Low RAM Usage** | Near-zero startup latency with optimized R8 tree-shaking and memory-efficient Compose layout trees. |
 
 ---
 
-## 🛡️ Isolated Multi-Profiles & Fingerprint Spoofing
+## 🛡️ Browsing Profiles & Web Identity Preferences
 
-Most mobile browsers share a single global cookie jar and device identity across all tabs, making it trivial for ad networks to track your identity across sessions. **Feather Browser solves this with containerized profile architecture:**
+Feather keeps tabs, bookmarks, history, downloads, and shortcuts organized by profile. Android System WebView owns cookies, local storage, and HTTP cache at the application level, so profiles are not security containers and should not be used to keep multiple logins isolated. Use separate Android user profiles or a browser with engine-level container support when strict isolation is required.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
@@ -62,13 +62,13 @@ Most mobile browsers share a single global cookie jar and device identity across
   └────────────────────┘   └────────────────────┘   └────────────────────┘
 ```
 
-### 🎭 Built-in Fingerprint Presets:
+### 🎭 Built-in Compatibility Presets:
 1. **Default (Native Android)**: Standard modern Mobile Chrome / Android 14 headers.
 2. **Windows Desktop**: Emulates Windows 11 x64, Google Chrome desktop User-Agent, and `Win32` navigator platform.
 3. **macOS Safari**: Emulates Apple Safari, Macintosh Intel platform, and WebKit rendering strings.
 4. **iPhone iOS**: Emulates Mobile Safari on iPhone / iOS 17.
 5. **Linux Firefox**: Emulates Gecko layout engine on X11 Linux.
-6. **Stealth Anonymous**: Anti-fingerprinting shield that injects dynamic noise into HTML5 Canvas 2D renderers, WebGL vendor/renderer strings, AudioContext frequency analysis, and spoofs `navigator.hardwareConcurrency` and `navigator.deviceMemory`.
+6. **Testing**: A compatibility configuration for QA. It does not make browsing anonymous or prevent fingerprinting.
 
 ### 💡 Real-World Use Cases:
 - **Multiple Account Management**: Log into multiple accounts on the same website (e.g., GitHub, Twitter, Google, Reddit) simultaneously without logging out or opening incognito windows.
@@ -84,8 +84,8 @@ Most mobile browsers share a single global cookie jar and device identity across
 - 📱 **Lock Screen & Notification Player Controls**: Full Android `MediaSession` integration providing lock screen playback controls, dynamic video title and artist display, high-resolution artwork thumbnails, and responsive play/pause/skip actions.
 - 🛡️ **Enhanced YouTube & Web Ad Blocker**: Dual-layer blocking engine combining fast network URL interception with client-side DOM cleansing to block YouTube video ads, banner promos, pop-ups, and trackers without battery overhead.
 - 🎨 **Material You Dynamic Theming**: Adapts seamlessly to your device's Android 12+ wallpaper colors, with Light, Dark, and true Pitch-Black (`#000000`) AMOLED modes.
-- 👥 **True Isolated Multi-Profiles**: Independent browser personas with partitioned cookies, cache, local storage, history, bookmarks, and per-profile hardware fingerprint presets.
-- 🕵️ **Ephemeral Private Browsing**: One-tap incognito tabs that wipe cookies, session tokens, and cache immediately upon closing.
+- 👥 **Organized Profiles**: Separate tabs, history, bookmarks, downloads, and shortcuts; WebView site storage remains shared by Android.
+- 🕵️ **Private Tabs**: Private tab metadata is discarded on close. Android WebView site storage is shared, so private tabs are not a replacement for a browser with engine-level private storage.
 - 🔍 **Multi-Engine Search Selector**: Switch instantly between Google, DuckDuckGo, Brave Search, and Bing directly from search settings.
 - 📑 **Visual Tabs Manager**: Intuitive tab switcher with real-time website favicons, tab counts, and swift swipe-to-dismiss gestures.
 - 📱 **Desktop Site Mode**: Instant one-tap switcher between mobile and desktop site layouts.
@@ -161,11 +161,11 @@ keytool -genkeypair -v \
   -keyalg RSA \
   -keysize 2048 \
   -validity 10000 \
-  -storepass feather123 \
-  -keypass feather123 \
+  -storepass <strong-store-password> \
+  -keypass <strong-key-password> \
   -dname "CN=Feather Browser, OU=Mobile, O=Feather Privacy, L=San Francisco, ST=California, C=US"
 ```
-*(You can customize `-alias`, `-storepass`, and `-dname` as desired. **Back up `release.keystore` safely** — if lost, existing users cannot update without uninstalling!)*
+*(Use unique, strong passwords and store them only in a password manager or CI secrets. Back up `release.keystore` safely—if it is lost, existing users cannot update without uninstalling.)*
 
 #### Step 2: Convert Keystore to Base64 String
 Encode the binary keystore file into a clean string so it can be safely stored in GitHub:
@@ -184,8 +184,8 @@ base64 -w 0 release.keystore > keystore_base64.txt
 3. Click **New repository secret**:
    - **Name:** `RELEASE_KEYSTORE_BASE64`
    - **Secret:** Paste the entire contents of `keystore_base64.txt`.
-4. *(Optional)* If you changed the default passwords in Step 1, also add:
-   - `KEYSTORE_PASSWORD`
+4. Add these repository secrets as well:
+   - `STORE_PASSWORD`
    - `KEY_ALIAS`
    - `KEY_PASSWORD`
 
@@ -222,4 +222,3 @@ Feather Browser only requests permissions strictly required for browsing:
 ## 📄 License
 
 This project is open source and licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-

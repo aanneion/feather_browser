@@ -41,6 +41,7 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.webkit.WebViewCompat
 import com.example.browser.ContextMenuData
 import com.example.browser.ContextMenuType
+import com.example.browser.HttpsMode
 
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
@@ -176,6 +177,7 @@ fun WebViewContainer(
     blockThirdPartyCookies: Boolean,
     enableWebDarkMode: Boolean,
     enableBackgroundPlay: Boolean,
+    httpsMode: HttpsMode,
     isDarkTheme: Boolean,
     currentProfile: BrowserProfile?,
     viewModel: BrowserViewModel,
@@ -197,6 +199,7 @@ fun WebViewContainer(
     }
 
     val activeSearchEngine = viewModel.searchEngine.collectAsState().value
+    val currentHttpsMode by rememberUpdatedState(httpsMode)
 
     var renderCrashCount by remember(tabId) { mutableStateOf(0) }
 
@@ -227,6 +230,8 @@ fun WebViewContainer(
                 is WebViewAction.SetDesktopMode -> {
                     val ua = if (action.enabled) {
                         DESKTOP_USER_AGENT
+                    } else if (!currentProfile?.customUserAgent.isNullOrBlank()) {
+                        currentProfile?.customUserAgent
                     } else if (activePreset.userAgent.isNotBlank()) {
                         activePreset.userAgent
                     } else {
@@ -475,6 +480,8 @@ fun WebViewContainer(
                             // Profile Fingerprint & User-Agent Configuration
                             if (isDesktopMode) {
                                 userAgentString = DESKTOP_USER_AGENT
+                            } else if (!currentProfile?.customUserAgent.isNullOrBlank()) {
+                                currentProfile?.customUserAgent
                             } else if (activePreset.userAgent.isNotBlank()) {
                                 userAgentString = activePreset.userAgent
                             } else {
@@ -486,7 +493,7 @@ fun WebViewContainer(
                             }
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                             }
                         }
 
@@ -562,12 +569,6 @@ fun WebViewContainer(
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
 
-                                if (activePreset != FingerprintPreset.DEFAULT) {
-                                    try {
-                                        val script = FingerprintScriptGenerator.generateInjectionScript(activePreset)
-                                        view?.evaluateJavascript(script, null)
-                                    } catch (e: Exception) { }
-                                }
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
@@ -591,14 +592,6 @@ fun WebViewContainer(
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false
                                 )
-
-                                // Safely inject anti-fingerprinting script on page finish
-                                if (activePreset != FingerprintPreset.DEFAULT) {
-                                    try {
-                                        val script = FingerprintScriptGenerator.generateInjectionScript(activePreset)
-                                        view?.evaluateJavascript(script, null)
-                                    } catch (e: Exception) { }
-                                }
 
                                 // Enforce theme styling on page finish
                                 try {
@@ -690,6 +683,15 @@ fun WebViewContainer(
                             }
 
                             private fun handleUrlOverride(view: WebView?, url: String): Boolean {
+                                val secureUrl = com.example.browser.UrlUtils.applyHttpsMode(url, currentHttpsMode)
+                                if (secureUrl == null) {
+                                    android.widget.Toast.makeText(context, "HTTPS-only mode blocked this insecure link", android.widget.Toast.LENGTH_SHORT).show()
+                                    return true
+                                }
+                                if (secureUrl != url) {
+                                    view?.loadUrl(secureUrl)
+                                    return true
+                                }
                                 if (url.startsWith("http://", ignoreCase = true) || 
                                     url.startsWith("https://", ignoreCase = true) ||
                                     url.startsWith("about:", ignoreCase = true) ||
