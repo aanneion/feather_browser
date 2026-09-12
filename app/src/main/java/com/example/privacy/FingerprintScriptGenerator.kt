@@ -145,6 +145,21 @@ object FingerprintScriptGenerator {
                     Document.prototype.hasFocus = function() { return true; };
                 } catch(e) {}
 
+                // Suppress visibility change events from reaching YouTube/media players
+                try {
+                    const origAddEventListener = EventTarget.prototype.addEventListener;
+                    EventTarget.prototype.addEventListener = function(type, listener, options) {
+                        if (type === 'visibilitychange' || type === 'webkitvisibilitychange') {
+                            return;
+                        }
+                        return origAddEventListener.apply(this, arguments);
+                    };
+                    ['visibilitychange', 'webkitvisibilitychange'].forEach(function(evt) {
+                        window.addEventListener(evt, function(e) { e.stopImmediatePropagation(); }, true);
+                        document.addEventListener(evt, function(e) { e.stopImmediatePropagation(); }, true);
+                    });
+                } catch(e) {}
+
                 // Track genuine user interaction vs automatic tab-switch pause
                 let isUserAction = false;
                 let userInteractionTimer = null;

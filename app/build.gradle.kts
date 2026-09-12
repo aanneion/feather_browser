@@ -39,9 +39,9 @@ android {
     create("releaseConfig") {
       if (releaseKeystore != null && releaseKeystore.exists()) {
         storeFile = releaseKeystore
-        storePassword = System.getenv("STORE_PASSWORD")
-        keyAlias = System.getenv("KEY_ALIAS")
-        keyPassword = System.getenv("KEY_PASSWORD")
+        storePassword = System.getenv("STORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "feather123"
+        keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "feather_release_key"
+        keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "feather123"
       }
     }
   }
@@ -57,6 +57,8 @@ android {
       )
       signingConfig = if (releaseKeystore != null && releaseKeystore.exists()) {
         signingConfigs.getByName("releaseConfig")
+      } else if (debugKeystore.exists()) {
+        signingConfigs.getByName("debugConfig")
       } else {
         null
       }

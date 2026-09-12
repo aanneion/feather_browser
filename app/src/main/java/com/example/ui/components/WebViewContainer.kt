@@ -569,6 +569,12 @@ fun WebViewContainer(
                                     view?.evaluateJavascript(themeScript, null)
                                 } catch (e: Exception) { }
 
+                                if (enableBackgroundPlay) {
+                                    try {
+                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
+                                        view?.evaluateJavascript(bgScript, null)
+                                    } catch (e: Exception) { }
+                                }
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
