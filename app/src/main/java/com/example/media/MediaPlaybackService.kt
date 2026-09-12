@@ -27,7 +27,7 @@ import java.net.URL
 class MediaPlaybackService : Service() {
 
     companion object {
-        const val CHANNEL_ID = "neon_media_playback_channel_v3"
+        const val CHANNEL_ID = "feather_media_playback_channel_v4"
         const val NOTIFICATION_ID = 2001
 
         const val ACTION_UPDATE_STATE = "com.example.media.UPDATE_STATE"
@@ -73,6 +73,17 @@ class MediaPlaybackService : Service() {
             MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
             MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
         )
+
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val sessionActivityIntent = PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        session.setSessionActivity(sessionActivityIntent)
 
         session.setCallback(object : MediaSessionCompat.Callback() {
             override fun onPlay() {
@@ -255,8 +266,9 @@ class MediaPlaybackService : Service() {
             .setContentText(artist)
             .setSubText(album)
             .setContentIntent(contentPendingIntent)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setOnlyAlertOnce(true)
             .setOngoing(isPlaying)
             .addAction(R.drawable.ic_media_prev, "Previous", prevIntent)
@@ -317,7 +329,7 @@ class MediaPlaybackService : Service() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Media Playback",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
                 description = "Background audio and media playback controls"
                 setShowBadge(false)

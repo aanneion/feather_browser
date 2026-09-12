@@ -122,7 +122,7 @@ class MediaPlaybackUnitTest {
 
     @Test
     fun mediaPlaybackService_constantsAndIntentActionsAreDefined() {
-        assertEquals("neon_media_playback_channel_v3", MediaPlaybackService.CHANNEL_ID)
+        assertEquals("feather_media_playback_channel_v4", MediaPlaybackService.CHANNEL_ID)
         assertEquals(2001, MediaPlaybackService.NOTIFICATION_ID)
         assertEquals("com.example.media.PLAY", MediaPlaybackService.ACTION_PLAY)
         assertEquals("com.example.media.PAUSE", MediaPlaybackService.ACTION_PAUSE)
@@ -131,5 +131,17 @@ class MediaPlaybackUnitTest {
         assertEquals("com.example.media.PREV", MediaPlaybackService.ACTION_PREV)
         assertEquals("com.example.media.STOP", MediaPlaybackService.ACTION_STOP)
         assertEquals("com.example.media.UPDATE_STATE", MediaPlaybackService.ACTION_UPDATE_STATE)
+    }
+
+    @Test
+    fun themeScript_generatesLightAndDarkOverrides() {
+        val lightScript = FingerprintScriptGenerator.generateThemeScript(isDark = false)
+        assertTrue(lightScript.contains("color-scheme: light !important"))
+        assertTrue(lightScript.contains("yt-theme', 'light'"))
+
+        val darkScript = FingerprintScriptGenerator.generateThemeScript(isDark = true)
+        assertTrue(darkScript.contains("setAttribute('data-theme', 'dark')"))
+        assertTrue(darkScript.contains("yt-theme', 'dark'"))
+        assertTrue(darkScript.contains("setAttribute('dark', '')"))
     }
 }

@@ -236,9 +236,17 @@ object FingerprintScriptGenerator {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artwork && navigator.mediaSession.metadata.artwork.length > 0) {
                             return navigator.mediaSession.metadata.artwork[navigator.mediaSession.metadata.artwork.length - 1].src || '';
                         }
+                        const ogImage = document.querySelector('meta[property="og:image"]');
+                        if (ogImage && ogImage.content) {
+                            return ogImage.content;
+                        }
                         const urlMatch = window.location.search.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
                         if (urlMatch && urlMatch[1]) {
                             return 'https://img.youtube.com/vi/' + urlMatch[1] + '/hqdefault.jpg';
+                        }
+                        const pathnameMatch = window.location.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+                        if (pathnameMatch && pathnameMatch[1]) {
+                            return 'https://img.youtube.com/vi/' + pathnameMatch[1] + '/hqdefault.jpg';
                         }
                     } catch(e) {}
                     return '';
@@ -249,9 +257,13 @@ object FingerprintScriptGenerator {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) {
                             return navigator.mediaSession.metadata.title;
                         }
-                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link, [class*="video-title"]');
+                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link, [class*="video-title"], ytm-video-description-header-renderer .title, h2.video-title');
                         if (ytTitle && ytTitle.innerText && ytTitle.innerText.trim()) {
                             return ytTitle.innerText.trim();
+                        }
+                        const ogTitle = document.querySelector('meta[property="og:title"]');
+                        if (ogTitle && ogTitle.content && ogTitle.content.trim()) {
+                            return ogTitle.content.replace(/ - YouTube$/i, '').trim();
                         }
                         const docTitle = document.title.replace(/ - YouTube$/i, '').replace(/^\(\d+\)\s*/, '').trim();
                         if (docTitle && docTitle !== 'YouTube') return docTitle;
@@ -264,9 +276,13 @@ object FingerprintScriptGenerator {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist) {
                             return navigator.mediaSession.metadata.artist;
                         }
-                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name, [class*="channel-name"]');
+                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name, .slim-owner-channel-name, [class*="channel-name"]');
                         if (ytAuthor && ytAuthor.innerText && ytAuthor.innerText.trim()) {
                             return ytAuthor.innerText.trim();
+                        }
+                        const authorMeta = document.querySelector('meta[name="author"]');
+                        if (authorMeta && authorMeta.content && authorMeta.content.trim()) {
+                            return authorMeta.content.trim();
                         }
                     } catch(e) {}
                     return 'YouTube';
@@ -555,13 +571,72 @@ object FingerprintScriptGenerator {
                     meta.content = targetScheme;
                 }
 
-                // 3. Spoof window.matchMedia for prefers-color-scheme media queries
+                // 3. Configure CSS overrides and DOM theme attributes
+                const darkClasses = ['dark', 'theme-dark', 'dark-theme', 'theme--dark'];
+                let style = document.getElementById('__feather_theme_override');
+
+                if (isDark) {
+                    if (style) {
+                        style.remove();
+                    }
+                    if (document.documentElement) {
+                        darkClasses.forEach(function(c) { document.documentElement.classList.add(c); });
+                        document.documentElement.setAttribute('data-theme', 'dark');
+                        document.documentElement.setAttribute('theme', 'dark');
+                        document.documentElement.setAttribute('dark', '');
+                        document.documentElement.setAttribute('data-color-mode', 'dark');
+                    }
+                    if (document.body) {
+                        darkClasses.forEach(function(c) { document.body.classList.add(c); });
+                        document.body.setAttribute('data-theme', 'dark');
+                        document.body.setAttribute('theme', 'dark');
+                        document.body.setAttribute('dark', '');
+                        document.body.setAttribute('data-color-mode', 'dark');
+                    }
+                    try {
+                        localStorage.setItem('yt-theme', 'dark');
+                    } catch(e) {}
+                } else {
+                    if (!style) {
+                        style = document.createElement('style');
+                        style.id = '__feather_theme_override';
+                        (document.head || document.documentElement).appendChild(style);
+                    }
+                    style.textContent = ':root, html, body { color-scheme: light !important; }';
+
+                    if (document.documentElement) {
+                        darkClasses.forEach(function(c) { document.documentElement.classList.remove(c); });
+                        if (document.documentElement.getAttribute('data-theme') === 'dark') document.documentElement.setAttribute('data-theme', 'light');
+                        if (document.documentElement.getAttribute('theme') === 'dark') document.documentElement.setAttribute('theme', 'light');
+                        if (document.documentElement.hasAttribute('dark')) document.documentElement.removeAttribute('dark');
+                        if (document.documentElement.getAttribute('data-color-mode') === 'dark') document.documentElement.setAttribute('data-color-mode', 'light');
+                    }
+                    if (document.body) {
+                        darkClasses.forEach(function(c) { document.body.classList.remove(c); });
+                        if (document.body.getAttribute('data-theme') === 'dark') document.body.setAttribute('data-theme', 'light');
+                        if (document.body.getAttribute('theme') === 'dark') document.body.setAttribute('theme', 'light');
+                        if (document.body.hasAttribute('dark')) document.body.removeAttribute('dark');
+                        if (document.body.getAttribute('data-color-mode') === 'dark') document.body.setAttribute('data-color-mode', 'light');
+                    }
+                    try {
+                        localStorage.setItem('yt-theme', 'light');
+                    } catch(e) {}
+                }
+
+                // 4. Spoof window.matchMedia for prefers-color-scheme media queries
                 const origMatchMedia = window.matchMedia;
                 window.matchMedia = function(query) {
                     if (!query) return origMatchMedia ? origMatchMedia.call(window, query) : null;
                     const q = String(query).toLowerCase();
                     if (q.indexOf('prefers-color-scheme') !== -1) {
-                        const matches = isDark ? (q.indexOf('dark') !== -1) : (q.indexOf('light') !== -1);
+                        const isDarkQuery = q.indexOf('dark') !== -1;
+                        const isLightQuery = q.indexOf('light') !== -1;
+                        let matches = false;
+                        if (isDark) {
+                            matches = isDarkQuery && !isLightQuery;
+                        } else {
+                            matches = isLightQuery && !isDarkQuery;
+                        }
                         const mql = origMatchMedia ? origMatchMedia.call(window, query) : {};
                         return {
                             matches: matches,

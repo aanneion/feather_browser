@@ -204,5 +204,6 @@ object DeviceUtils {
             || board.contains("goldfish")
             || manufacturer.contains("genymotion")
             || isX86
+            || !java.io.File("/dev/dri").exists()
     }
 }

@@ -308,21 +308,19 @@ fun BrowserScreen(
                     .padding(top = effectiveTopPadding, bottom = effectiveBottomPadding)
                     .background(MaterialTheme.colorScheme.background)
             ) {
-                // WebView is expensive. Retain only the visible tab and the one active media tab;
-                // all other tabs are restored from their persisted URL when selected.
+                // Retain all open tabs in memory with View.GONE when inactive so page state,
+                // video playback, and scroll positions are never lost or refreshed on tab switch.
                 for (tab in openTabs) {
                     val isActive = (tab.id == activeTabId && !isHome)
-                    val shouldRender = isActive || (enableBackgroundPlay && tab.id == activeMediaTabId)
-                    if (shouldRender) {
-                        key(tab.id) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .zIndex(if (isActive) 1f else 0f)
-                                    .then(
-                                        if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
-                                    )
-                            ) {
+                    key(tab.id) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .zIndex(if (isActive) 1f else 0f)
+                                .then(
+                                    if (!isActive) Modifier.pointerInput(Unit) {} else Modifier
+                                )
+                        ) {
                                 WebViewContainer(
                                     tabId = tab.id,
                                     initialUrl = tab.url,
@@ -338,8 +336,7 @@ fun BrowserScreen(
                                     viewModel = viewModel,
                                     actions = viewModel.webViewActionEvent,
                                     isActive = isActive
-                                )
-                            }
+                            )
                         }
                     }
                 }
