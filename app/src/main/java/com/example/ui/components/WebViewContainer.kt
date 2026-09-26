@@ -48,9 +48,28 @@ private const val DESKTOP_USER_AGENT =
 
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
+        set(value) {
+            val wasDisabled = field
+            field = value
+            // When background playback gets disabled again (e.g. tab close / exit browser),
+            // re-sync real visibility so Chromium can release compositor/GPU resources.
+            if (wasDisabled && !value) restoreRealVisibility()
+        }
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
     var isAddressBarEditing: Boolean = false
     var onDismissAddressBar: (() -> Unit)? = null
+
+    // Tracks the real (suppressed) visibility values while background playback fakes VISIBLE,
+    // so we can replay them once suppression is turned off again.
+    private var lastRealViewVisibility: Int? = null
+    private var lastRealWindowVisibility: Int? = null
+
+    fun restoreRealVisibility() {
+        try {
+            lastRealViewVisibility?.let { super.onVisibilityChanged(this, it) }
+            lastRealWindowVisibility?.let { super.onWindowVisibilityChanged(it) }
+        } catch (e: Throwable) { }
+    }
 
     private var touchStartX = 0f
     private var touchStartY = 0f
@@ -132,15 +151,25 @@ class PersistentWebView(context: Context) : WebView(context) {
 
     override fun onVisibilityChanged(changedView: View, visibility: Int) {
         try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.onVisibilityChanged(changedView, effectiveVisibility)
+            if (allowBackgroundPlayback) {
+                lastRealViewVisibility = visibility
+                super.onVisibilityChanged(changedView, View.VISIBLE)
+            } else {
+                lastRealViewVisibility = null
+                super.onVisibilityChanged(changedView, visibility)
+            }
         } catch (e: Throwable) { }
     }
 
     override fun onWindowVisibilityChanged(visibility: Int) {
         try {
-            val effectiveVisibility = if (allowBackgroundPlayback) View.VISIBLE else visibility
-            super.onWindowVisibilityChanged(effectiveVisibility)
+            if (allowBackgroundPlayback) {
+                lastRealWindowVisibility = visibility
+                super.onWindowVisibilityChanged(View.VISIBLE)
+            } else {
+                lastRealWindowVisibility = null
+                super.onWindowVisibilityChanged(visibility)
+            }
         } catch (e: Throwable) { }
     }
 
@@ -705,6 +734,33 @@ fun WebViewContainer(
                                 view: WebView?,
                                 detail: RenderProcessGoneDetail?
                             ): Boolean {
+                                // Diagnostics for real-device triage of heavy-site crashes
+                                // (e.g. github.com). Log renderer/process state, then recreate.
+                                try {
+                                    val crashedRenderer = detail?.didCrash() ?: false
+                                    val pkgVersion = androidx.webkit.WebViewCompat
+                                        .getCurrentWebViewPackage(context.applicationContext)?.versionName ?: "unknown"
+                                    val memClassMb = (context.applicationContext
+                                        .getSystemService(android.app.ActivityManager::class.java))
+                                        ?.memoryClass ?: -1
+                                    val activityManager = context.applicationContext
+                                        .getSystemService(android.app.ActivityManager::class.java)
+                                    val memInfo = android.app.ActivityManager.MemoryInfo().also {
+                                        activityManager?.getMemoryInfo(it)
+                                    }
+                                    android.util.Log.e(
+                                        "FeatherWebView",
+                                        "onRenderProcessGone tab=$tabId didCrash=$crashedRenderer " +
+                                            "rendererOutdated=${detail?.rendererPriorityAtExit()} " +
+                                            "webViewPkg=$pkgVersion " +
+                                            "deviceMemoryClassMb=$memClassMb " +
+                                            "availMemMb=${memInfo.availMem / (1024 * 1024)} " +
+                                            "lowMemory=${memInfo.lowMemory} " +
+                                            "alive=${view != null && view.javaClass.name.isNotEmpty()}",
+                                    )
+                                } catch (e: Throwable) {
+                                    android.util.Log.e("FeatherWebView", "onRenderProcessGone diagnostics failed", e)
+                                }
                                 try {
                                     (view?.parent as? ViewGroup)?.removeView(view)
                                     view?.destroy()

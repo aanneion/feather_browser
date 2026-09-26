@@ -3,6 +3,7 @@ package com.example
 import android.app.Application
 import android.system.Os
 import com.example.browser.DeviceUtils
+import com.example.media.MediaPlaybackService
 import java.io.File
 
 class BrowserApplication : Application() {
@@ -19,6 +20,16 @@ class BrowserApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         configureGraphicsEnvironment()
+
+        // Create the media notification channel at process start so it always exists
+        // before MediaPlaybackService promotes itself to foreground. On some devices a
+        // foreground-service notification posted against a channel created in the same
+        // instant can be dropped; pre-creating removes that race.
+        try {
+            MediaPlaybackService.createNotificationChannel(this)
+        } catch (e: Throwable) {
+            android.util.Log.e("BrowserApp", "Failed to pre-create media notification channel", e)
+        }
 
         // Clean up any improperly nested Code Cache inside HTTP Cache that breaks Chromium's SimpleIndexFile
         try {
