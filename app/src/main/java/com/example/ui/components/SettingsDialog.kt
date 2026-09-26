@@ -780,19 +780,12 @@ private fun GlassySettingsCard(
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 2.dp,
-            shadowElevation = 3.dp,
+            shadowElevation = 2.dp,
             border = BorderStroke(
                 width = 1.dp,
                 color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.85f)
             ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .shadow(
-                    elevation = 4.dp,
-                    shape = RoundedCornerShape(18.dp),
-                    ambientColor = Color(0x1F000000),
-                    spotColor = Color(0x26000000)
-                )
+            modifier = Modifier.fillMaxWidth()
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),

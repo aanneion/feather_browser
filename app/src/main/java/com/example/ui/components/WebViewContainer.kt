@@ -31,6 +31,7 @@ import com.example.privacy.FingerprintScriptGenerator
 import com.example.privacy.YouTubeAdBlocker
 import com.example.media.MediaControlAction
 import com.example.media.MediaSessionManager
+import com.example.media.BrowserPlaybackState
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.Context
 import android.os.Handler
@@ -48,22 +49,29 @@ private const val DESKTOP_USER_AGENT =
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
+    var isAddressBarEditing: Boolean = false
+    var onDismissAddressBar: (() -> Unit)? = null
 
+    private var touchStartX = 0f
     private var touchStartY = 0f
     private var lastTouchY = 0f
     private var isTouchDragging = false
+    private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
         when (event.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
-                touchStartY = event.rawY
+                touchStartX = event.x
+                touchStartY = event.y
                 lastTouchY = event.rawY
                 isTouchDragging = false
             }
             android.view.MotionEvent.ACTION_MOVE -> {
                 val currentY = event.rawY
                 val deltaY = (lastTouchY - currentY).toInt()
-                if (kotlin.math.abs(currentY - touchStartY) > 20) {
+                val dx = event.x - touchStartX
+                val dy = event.y - touchStartY
+                if (kotlin.math.hypot(dx, dy) > touchSlop) {
                     isTouchDragging = true
                 }
                 if (isTouchDragging && kotlin.math.abs(deltaY) >= 10) {
@@ -71,11 +79,45 @@ class PersistentWebView(context: Context) : WebView(context) {
                     lastTouchY = currentY
                 }
             }
-            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+            android.view.MotionEvent.ACTION_UP -> {
+                if (!isTouchDragging && isAddressBarEditing) {
+                    checkAndDismissAddressBar(event.x, event.y)
+                }
+                isTouchDragging = false
+            }
+            android.view.MotionEvent.ACTION_CANCEL -> {
                 isTouchDragging = false
             }
         }
         return super.onTouchEvent(event)
+    }
+
+    private fun checkAndDismissAddressBar(x: Float, y: Float) {
+        if (!isAddressBarEditing) return
+        val hit = hitTestResult
+        val hitType = hit?.type ?: HitTestResult.UNKNOWN_TYPE
+        if (hitType == HitTestResult.SRC_ANCHOR_TYPE ||
+            hitType == HitTestResult.SRC_IMAGE_ANCHOR_TYPE ||
+            hitType == HitTestResult.PHONE_TYPE ||
+            hitType == HitTestResult.GEO_TYPE ||
+            hitType == HitTestResult.EMAIL_TYPE ||
+            hitType == HitTestResult.EDIT_TEXT_TYPE) {
+            post { onDismissAddressBar?.invoke() }
+            return
+        }
+
+        val density = resources.displayMetrics.density
+        val cssX = (x / density).toInt()
+        val cssY = (y / density).toInt()
+        val js = "(function(){" +
+                "var el = document.elementFromPoint($cssX, $cssY);" +
+                "if (!el) return 'non-interactive';" +
+                "var interactive = el.closest('a, button, input, textarea, select, [role=\"button\"], [role=\"link\"], [contenteditable=\"true\"]');" +
+                "return interactive ? 'interactive' : 'non-interactive';" +
+                "})()"
+        evaluateJavascript(js) {
+            post { onDismissAddressBar?.invoke() }
+        }
     }
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
@@ -136,9 +178,15 @@ class FeatherMediaBridge(
     }
 
     @JavascriptInterface
-    fun updatePlaybackState(isPlaying: Boolean) {
+    fun updatePlaybackState(stateStr: String) {
         try {
-            MediaSessionManager.updatePlaybackState(context, tabId, isPlaying)
+            val state = when (stateStr.trim().uppercase()) {
+                "PLAYING", "TRUE" -> BrowserPlaybackState.PLAYING
+                "BUFFERING" -> BrowserPlaybackState.BUFFERING
+                "STOPPED", "ENDED" -> BrowserPlaybackState.ENDED
+                else -> BrowserPlaybackState.PAUSED
+            }
+            MediaSessionManager.updatePlaybackState(context, tabId, state)
         } catch (e: Throwable) { }
     }
 
@@ -146,14 +194,14 @@ class FeatherMediaBridge(
     fun onMediaPlaying(title: String, artist: String) {
         try {
             MediaSessionManager.updateMetadata(context, tabId, title, artist)
-            MediaSessionManager.updatePlaybackState(context, tabId, true)
+            MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
         } catch (e: Throwable) { }
     }
 
     @JavascriptInterface
     fun onMediaPaused() {
         try {
-            MediaSessionManager.updatePlaybackState(context, tabId, false)
+            MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PAUSED)
         } catch (e: Throwable) { }
     }
 
@@ -182,6 +230,8 @@ fun WebViewContainer(
     viewModel: BrowserViewModel,
     actions: SharedFlow<WebViewAction>,
     isActive: Boolean = true,
+    isAddressBarEditing: Boolean = false,
+    onDismissAddressBar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -366,6 +416,8 @@ fun WebViewContainer(
                     val themedContext = activity.createConfigurationContext(overrideConfig)
 
                     PersistentWebView(themedContext).apply {
+                        this.isAddressBarEditing = isAddressBarEditing
+                        this.onDismissAddressBar = onDismissAddressBar
                         allowBackgroundPlayback = enableBackgroundPlay
                         visibility = if (isActive) View.VISIBLE else View.GONE
                         isFocusable = true
@@ -846,6 +898,8 @@ fun WebViewContainer(
                     MediaSessionManager.registerWebView(tabId, webView)
                     if (webView is PersistentWebView) {
                         webView.allowBackgroundPlayback = enableBackgroundPlay
+                        webView.isAddressBarEditing = isAddressBarEditing
+                        webView.onDismissAddressBar = onDismissAddressBar
                     }
 
                     // Keep web dark mode & theme styling synchronized dynamically
@@ -906,3 +960,4 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     is ContextWrapper -> baseContext.findActivity()
     else -> null
 }
+

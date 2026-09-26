@@ -163,7 +163,7 @@ object FingerprintScriptGenerator {
                 // Track genuine user interaction vs automatic tab-switch pause
                 let isUserAction = false;
                 let userInteractionTimer = null;
-                let programmaticPauseAllowed = false;
+                
 
                 function markUserAction() {
                     isUserAction = true;
@@ -178,24 +178,7 @@ object FingerprintScriptGenerator {
                     document.addEventListener(evt, markUserAction, true);
                 });
 
-                // Wrap HTMLMediaElement pause to prevent unwanted tab switch pauses
-                const origPlay = HTMLMediaElement.prototype.play;
-                const origPause = HTMLMediaElement.prototype.pause;
-                HTMLMediaElement.prototype.pause = function() {
-                    if (programmaticPauseAllowed || isUserAction) {
-                        return origPause.apply(this, arguments);
-                    }
-                    // Auto-pause detected from background/tab switch; immediately resume playback
-                    const media = this;
-                    origPause.apply(this, arguments);
-                    setTimeout(function() {
-                        if (!programmaticPauseAllowed && !isUserAction && media.paused && !media.ended) {
-                            try {
-                                origPlay.call(media).catch(function() {});
-                            } catch(e) {}
-                        }
-                    }, 40);
-                };
+                // Removed HTMLMediaElement pause override hack
 
                 // 3. Spoof IntersectionObserver for video / player elements so YouTube mobile doesn't pause when offscreen
                 try {
@@ -234,19 +217,25 @@ object FingerprintScriptGenerator {
                 function getMediaThumbnail() {
                     try {
                         if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artwork && navigator.mediaSession.metadata.artwork.length > 0) {
-                            return navigator.mediaSession.metadata.artwork[navigator.mediaSession.metadata.artwork.length - 1].src || '';
+                            var art = navigator.mediaSession.metadata.artwork[navigator.mediaSession.metadata.artwork.length - 1].src || '';
+                            if (art) {
+                                if (art.indexOf('//') === 0) art = 'https:' + art;
+                                return art;
+                            }
                         }
                         const ogImage = document.querySelector('meta[property="og:image"]');
                         if (ogImage && ogImage.content) {
-                            return ogImage.content;
+                            var src = ogImage.content;
+                            if (src.indexOf('//') === 0) src = 'https:' + src;
+                            return src;
                         }
                         const urlMatch = window.location.search.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
                         if (urlMatch && urlMatch[1]) {
                             return 'https://img.youtube.com/vi/' + urlMatch[1] + '/hqdefault.jpg';
                         }
-                        const pathnameMatch = window.location.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
-                        if (pathnameMatch && pathnameMatch[1]) {
-                            return 'https://img.youtube.com/vi/' + pathnameMatch[1] + '/hqdefault.jpg';
+                        const pathnameMatch = window.location.pathname.match(/\/(shorts|watch|v)\/([a-zA-Z0-9_-]{11})/);
+                        if (pathnameMatch && pathnameMatch[2]) {
+                            return 'https://img.youtube.com/vi/' + pathnameMatch[2] + '/hqdefault.jpg';
                         }
                     } catch(e) {}
                     return '';
@@ -299,10 +288,10 @@ object FingerprintScriptGenerator {
                             const artist = getMediaArtist();
                             const art = getMediaThumbnail();
                             window.FeatherMediaBridge.updateMetadata(title, artist, 'YouTube', art);
-                            window.FeatherMediaBridge.updatePlaybackState(true);
+                            window.FeatherMediaBridge.updatePlaybackState('PLAYING');
                         } else {
                             if (wasActivePlayback) {
-                                window.FeatherMediaBridge.updatePlaybackState(false);
+                                window.FeatherMediaBridge.updatePlaybackState('PAUSED');
                             }
                         }
                     } catch(e) {}
@@ -342,7 +331,7 @@ object FingerprintScriptGenerator {
                                                 val.album || 'YouTube',
                                                 artUrl || getMediaThumbnail()
                                             );
-                                            window.FeatherMediaBridge.updatePlaybackState(true);
+                                            window.FeatherMediaBridge.updatePlaybackState('PLAYING');
                                         }
                                     } catch(e) {}
                                 },
@@ -396,7 +385,7 @@ object FingerprintScriptGenerator {
                 };
 
                 window.__feather_media_pause = function() {
-                    programmaticPauseAllowed = true;
+                    
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['pause'] === 'function') {
                             window.__feather_actions['pause']();
@@ -417,12 +406,10 @@ object FingerprintScriptGenerator {
                     try {
                         const mediaEls = document.querySelectorAll('video, audio');
                         mediaEls.forEach(function(m) {
-                            if (!m.paused) origPause.call(m);
+                            if (!m.paused) m.pause();
                         });
                     } catch(e) {}
-                    setTimeout(function() {
-                        programmaticPauseAllowed = false;
-                    }, 400);
+                    
                 };
 
                 window.__feather_media_toggle = function() {

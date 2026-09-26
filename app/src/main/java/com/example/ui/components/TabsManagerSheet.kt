@@ -64,6 +64,7 @@ fun TabsManagerScreen(
     }
 
     val listState = rememberLazyListState()
+    var showCloseAllDialog by remember { mutableStateOf(false) }
 
     // Scroll to active tab on open once without jumping on tab closure
     LaunchedEffect(Unit) {
@@ -226,7 +227,7 @@ fun TabsManagerScreen(
                     // Close All Tabs
                     if (tabs.isNotEmpty()) {
                         TextButton(
-                            onClick = onCloseAllTabs,
+                            onClick = { showCloseAllDialog = true },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                             modifier = Modifier.testTag("close_all_tabs_button")
                         ) {
@@ -361,6 +362,30 @@ fun TabsManagerScreen(
                 }
             }
         }
+    }
+
+    if (showCloseAllDialog) {
+        AlertDialog(
+            onDismissRequest = { showCloseAllDialog = false },
+            title = { Text("Close all tabs?") },
+            text = { Text("Are you sure you want to close all open tabs?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCloseAllTabs()
+                        showCloseAllDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Close All")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCloseAllDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 

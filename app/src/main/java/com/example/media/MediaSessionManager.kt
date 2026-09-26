@@ -28,14 +28,23 @@ enum class MediaControlAction {
     STOP
 }
 
+enum class BrowserPlaybackState {
+    IDLE,
+    BUFFERING,
+    PLAYING,
+    PAUSED,
+    ENDED
+}
+
 object MediaSessionManager {
+
     private val scope = CoroutineScope(Dispatchers.Main.immediate)
 
     private val _currentMetadata = MutableStateFlow<BrowserMediaMetadata?>(null)
     val currentMetadata = _currentMetadata.asStateFlow()
 
-    private val _isPlaying = MutableStateFlow(false)
-    val isPlaying = _isPlaying.asStateFlow()
+    private val _playbackState = MutableStateFlow(BrowserPlaybackState.IDLE)
+    val playbackState = _playbackState.asStateFlow()
 
     private val _activeMediaTabId = MutableStateFlow<String?>(null)
     val activeMediaTabId = _activeMediaTabId.asStateFlow()
@@ -67,18 +76,25 @@ object MediaSessionManager {
     ) {
         val cleanTitle = title.trim().ifBlank { "Playing Audio" }
         val cleanArtist = artist.trim().ifBlank { "Feather Browser" }
+        val effectiveArtworkUrl = if (artworkUrl.isNotBlank()) {
+            artworkUrl
+        } else if (_currentMetadata.value?.tabId == tabId && _currentMetadata.value?.artworkUrl?.isNotBlank() == true) {
+            _currentMetadata.value!!.artworkUrl
+        } else {
+            ""
+        }
         val meta = BrowserMediaMetadata(
             title = cleanTitle,
             artist = cleanArtist,
             album = album,
-            artworkUrl = artworkUrl,
+            artworkUrl = effectiveArtworkUrl,
             tabId = tabId
         )
         _currentMetadata.value = meta
         _activeMediaTabId.value = tabId
 
         // Only start or update service if media is currently playing or service is already active
-        if (_isPlaying.value || isServiceActive) {
+        if (_playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING || isServiceActive) {
             startOrUpdateService(context)
         }
     }
@@ -86,13 +102,16 @@ object MediaSessionManager {
     fun updatePlaybackState(
         context: Context,
         tabId: String,
-        playing: Boolean
+        state: BrowserPlaybackState
     ) {
-        if (!playing && !_isPlaying.value && !isServiceActive) {
+        val isCurrentlyActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        val isNewActive = state == BrowserPlaybackState.PLAYING || state == BrowserPlaybackState.BUFFERING
+
+        if (!isNewActive && !isCurrentlyActive && !isServiceActive) {
             return
         }
 
-        if (playing) {
+        if (isNewActive) {
             val prevTabId = _activeMediaTabId.value
             if (prevTabId != null && prevTabId != tabId) {
                 // Another tab has started playing media! Pause the previous tab so sound sources don't overlap
@@ -106,10 +125,15 @@ object MediaSessionManager {
             }
         }
 
-        _isPlaying.value = playing
+        _playbackState.value = state
         _activeMediaTabId.value = tabId
 
-        if (playing) {
+        if (state == BrowserPlaybackState.ENDED) {
+            onMediaEnded(context, tabId)
+            return
+        }
+
+        if (isNewActive) {
             if (_currentMetadata.value == null) {
                 _currentMetadata.value = BrowserMediaMetadata(
                     title = "YouTube Video",
@@ -122,17 +146,15 @@ object MediaSessionManager {
             startOrUpdateService(context)
         } else if (isServiceActive) {
             startOrUpdateService(context)
-        } else {
-            stopPlayback(context)
         }
     }
 
     fun dispatchAction(action: MediaControlAction) {
         when (action) {
-            MediaControlAction.PLAY -> _isPlaying.value = true
-            MediaControlAction.PAUSE -> _isPlaying.value = false
-            MediaControlAction.TOGGLE_PLAY_PAUSE -> _isPlaying.value = !_isPlaying.value
-            MediaControlAction.STOP -> _isPlaying.value = false
+            MediaControlAction.PLAY -> _playbackState.value = BrowserPlaybackState.PLAYING
+            MediaControlAction.PAUSE -> _playbackState.value = BrowserPlaybackState.PAUSED
+            MediaControlAction.TOGGLE_PLAY_PAUSE -> { if (_playbackState.value == BrowserPlaybackState.PLAYING) _playbackState.value = BrowserPlaybackState.PAUSED else _playbackState.value = BrowserPlaybackState.PLAYING }
+            MediaControlAction.STOP -> _playbackState.value = BrowserPlaybackState.PAUSED
             else -> {}
         }
         scope.launch {
@@ -177,7 +199,8 @@ object MediaSessionManager {
             scope.launch {
                 // Short grace period to allow YouTube playlist or next track autoplay to start seamlessly
                 kotlinx.coroutines.delay(1000)
-                if (!_isPlaying.value && (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null)) {
+                val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+                if (!isActive && (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null)) {
                     stopPlayback(context)
                 }
             }
@@ -185,7 +208,7 @@ object MediaSessionManager {
     }
 
     fun stopPlayback(context: Context) {
-        _isPlaying.value = false
+        _playbackState.value = BrowserPlaybackState.IDLE
         _currentMetadata.value = null
         _activeMediaTabId.value = null
         isServiceActive = false
@@ -193,13 +216,15 @@ object MediaSessionManager {
     }
 
     fun refreshNotification(context: Context) {
-        if (_isPlaying.value && _currentMetadata.value != null) {
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        if (isActive && _currentMetadata.value != null) {
             startOrUpdateService(context)
         }
     }
 
     private fun startOrUpdateService(context: Context) {
-        if (!_isPlaying.value && _currentMetadata.value == null) {
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        if (!isActive && _currentMetadata.value == null) {
             return
         }
         try {

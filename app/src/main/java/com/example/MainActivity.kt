@@ -76,23 +76,19 @@ class MainActivity : ComponentActivity() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 val currentDisplay = display
-                val modes = currentDisplay?.supportedModes
-                val maxRefreshMode = modes?.maxByOrNull { it.refreshRate }
-                if (maxRefreshMode != null && maxRefreshMode.refreshRate > 60f) {
+                val maxRefresh = currentDisplay?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 0f
+                if (maxRefresh > 60f) {
                     val params = window.attributes
-                    params.preferredDisplayModeId = maxRefreshMode.modeId
-                    params.preferredRefreshRate = maxRefreshMode.refreshRate
+                    params.preferredRefreshRate = maxRefresh
                     window.attributes = params
                 }
             } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 @Suppress("DEPRECATION")
                 val currentDisplay = windowManager.defaultDisplay
-                val modes = currentDisplay?.supportedModes
-                val maxRefreshMode = modes?.maxByOrNull { it.refreshRate }
-                if (maxRefreshMode != null && maxRefreshMode.refreshRate > 60f) {
+                val maxRefresh = currentDisplay?.supportedModes?.maxOfOrNull { it.refreshRate } ?: 0f
+                if (maxRefresh > 60f) {
                     val params = window.attributes
-                    params.preferredDisplayModeId = maxRefreshMode.modeId
-                    params.preferredRefreshRate = maxRefreshMode.refreshRate
+                    params.preferredRefreshRate = maxRefresh
                     window.attributes = params
                 }
             }

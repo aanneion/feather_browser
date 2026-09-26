@@ -43,6 +43,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,7 +76,7 @@ fun AddressBar(
     modifier: Modifier = Modifier
 ) {
     var isEditing by remember { mutableStateOf(false) }
-    var inputText by remember(activeTab?.url) { mutableStateOf(activeTab?.url ?: "") }
+    var inputText by remember(activeTab?.url) { mutableStateOf(TextFieldValue(activeTab?.url ?: "")) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingSuggestions by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
@@ -82,7 +84,7 @@ fun AddressBar(
 
     // Real-time search suggestions: Fetch query predictions from Google Search as the user types
     LaunchedEffect(inputText, isEditing) {
-        val trimmed = inputText.trim()
+        val trimmed = inputText.text.trim()
         val currentUrl = activeTab?.url?.trim() ?: ""
         if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
             suggestions = emptyList()
@@ -109,12 +111,12 @@ fun AddressBar(
         onEditingChanged?.invoke(false)
         suggestions = emptyList()
         focusManager.clearFocus(force = true)
-        inputText = activeTab?.url ?: ""
+        inputText = TextFieldValue(activeTab?.url ?: "")
     }
 
     LaunchedEffect(activeTab?.url) {
         if (!isEditing) {
-            inputText = activeTab?.url ?: ""
+            inputText = TextFieldValue(activeTab?.url ?: "")
         }
     }
 
@@ -283,13 +285,13 @@ fun AddressBar(
                                 keyboardType = KeyboardType.Uri
                             ),
                             keyboardActions = KeyboardActions(
-                                onSearch = { submitNavigation(inputText) },
-                                onGo = { submitNavigation(inputText) },
-                                onDone = { submitNavigation(inputText) },
-                                onSend = { submitNavigation(inputText) }
+                                onSearch = { submitNavigation(inputText.text) },
+                                onGo = { submitNavigation(inputText.text) },
+                                onDone = { submitNavigation(inputText.text) },
+                                onSend = { submitNavigation(inputText.text) }
                             ),
                             decorationBox = { innerTextField ->
-                                if (inputText.isEmpty() && !isEditing) {
+                                if (inputText.text.isEmpty() && !isEditing) {
                                     Text(
                                         text = "Search or enter URL",
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -306,7 +308,7 @@ fun AddressBar(
                                 .onKeyEvent { keyEvent ->
                                     if (keyEvent.key == Key.Enter || keyEvent.key == Key.NumPadEnter) {
                                         if (keyEvent.type == KeyEventType.KeyUp || keyEvent.nativeKeyEvent.action == android.view.KeyEvent.ACTION_UP) {
-                                            submitNavigation(inputText)
+                                            submitNavigation(inputText.text)
                                         }
                                         true
                                     } else {
@@ -318,8 +320,10 @@ fun AddressBar(
                                     if (newlyFocused != isEditing) {
                                         isEditing = newlyFocused
                                         onEditingChanged?.invoke(newlyFocused)
-                                        if (newlyFocused && inputText.isBlank() && activeTab?.url?.isNotBlank() == true) {
-                                            inputText = activeTab.url
+                                        if (newlyFocused && inputText.text.isBlank() && activeTab?.url?.isNotBlank() == true) {
+                                            inputText = TextFieldValue(activeTab.url, TextRange(0, activeTab.url.length))
+                                        } else if (newlyFocused) {
+                                            inputText = inputText.copy(selection = TextRange(0, inputText.text.length))
                                         }
                                         if (!newlyFocused) {
                                             suggestions = emptyList()
@@ -332,10 +336,10 @@ fun AddressBar(
                         // Clear Button and Navigate/Go Action
                         val hasValidUrl = !activeTab?.url.isNullOrBlank() && activeTab?.url != "about:blank"
                         if (isEditing) {
-                            if (inputText.isNotEmpty()) {
+                            if (inputText.text.isNotEmpty()) {
                                 IconButton(
                                     onClick = {
-                                        inputText = ""
+                                        inputText = TextFieldValue("")
                                         suggestions = emptyList()
                                     },
                                     modifier = Modifier
@@ -350,9 +354,9 @@ fun AddressBar(
                                     )
                                 }
                             }
-                            if (inputText.trim().isNotEmpty()) {
+                            if (inputText.text.trim().isNotEmpty()) {
                                 IconButton(
-                                    onClick = { submitNavigation(inputText) },
+                                    onClick = { submitNavigation(inputText.text) },
                                     modifier = Modifier
                                         .size(28.dp)
                                         .focusProperties { canFocus = false }
@@ -473,7 +477,7 @@ fun AddressBar(
             )
 
             // Real-Time Google Search Suggestions Dropdown
-            val trimmedQuery = inputText.trim()
+            val trimmedQuery = inputText.text.trim()
             val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
                 (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
 
@@ -488,10 +492,8 @@ fun AddressBar(
 
             AnimatedVisibility(
                 visible = shouldShowSuggestions,
-                enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(150)) +
-                        expandVertically(animationSpec = androidx.compose.animation.core.tween(200)),
-                exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(100)) +
-                        shrinkVertically(animationSpec = androidx.compose.animation.core.tween(150))
+                enter = fadeIn(animationSpec = androidx.compose.animation.core.tween(120)),
+                exit = fadeOut(animationSpec = androidx.compose.animation.core.tween(60))
             ) {
                 Surface(
                     shape = if (isBottomPosition) RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp) else RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp),
@@ -589,7 +591,7 @@ fun AddressBar(
                                     },
                                     trailingIcon = Icons.Default.NorthWest,
                                     onTrailingClick = {
-                                        inputText = trimmedQuery
+                                        inputText = TextFieldValue(trimmedQuery, TextRange(trimmedQuery.length))
                                     },
                                     onClick = { submitNavigation(trimmedQuery) },
                                     modifier = Modifier.testTag("suggestion_query_direct")
@@ -626,7 +628,7 @@ fun AddressBar(
                                     text = annotatedSuggestion,
                                     trailingIcon = Icons.Default.NorthWest,
                                     onTrailingClick = {
-                                        inputText = suggestion
+                                        inputText = TextFieldValue(suggestion, TextRange(suggestion.length))
                                     },
                                     onClick = { submitNavigation(suggestion) },
                                     modifier = Modifier.testTag("search_suggestion_$index")

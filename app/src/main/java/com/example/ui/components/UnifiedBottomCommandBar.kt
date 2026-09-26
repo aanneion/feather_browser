@@ -49,6 +49,8 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,7 +94,7 @@ fun UnifiedBottomCommandBar(
     onOpenReaderMode: (() -> Unit)? = null
 ) {
     var isEditing by remember { mutableStateOf(false) }
-    var inputText by remember(activeTab?.url) { mutableStateOf(activeTab?.url ?: "") }
+    var inputText by remember(activeTab?.url) { mutableStateOf(TextFieldValue(activeTab?.url ?: "")) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingSuggestions by remember { mutableStateOf(false) }
 
@@ -122,7 +124,7 @@ fun UnifiedBottomCommandBar(
 
     // Real-time search suggestions: Fetch query predictions from Google Search
     LaunchedEffect(inputText, isEditing) {
-        val trimmed = inputText.trim()
+        val trimmed = inputText.text.trim()
         val currentUrl = activeTab?.url?.trim() ?: ""
         if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
             suggestions = emptyList()
@@ -194,31 +196,25 @@ fun UnifiedBottomCommandBar(
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
             // Search Suggestions Overlay above the bottom dock
-        val trimmedQuery = inputText.trim()
+        val trimmedQuery = inputText.text.trim()
         val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
             (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
 
         AnimatedVisibility(
             visible = shouldShowSuggestions,
-            enter = fadeIn(tween(150)) + expandVertically(tween(200)),
-            exit = fadeOut(tween(120)) + shrinkVertically(tween(150))
+            enter = fadeIn(tween(120)),
+            exit = fadeOut(tween(60))
         ) {
             Surface(
                 shape = RoundedCornerShape(18.dp),
                 color = MaterialTheme.colorScheme.surface,
                 tonalElevation = 6.dp,
-                shadowElevation = 12.dp,
+                shadowElevation = 8.dp,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 8.dp)
                     .heightIn(max = suggestionsMaxHeight)
-                    .shadow(
-                        elevation = 10.dp,
-                        shape = RoundedCornerShape(18.dp),
-                        ambientColor = Color(0x33000000),
-                        spotColor = Color(0x40000000)
-                    )
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     // Header: Google Suggestions branding indicator
@@ -414,9 +410,9 @@ fun UnifiedBottomCommandBar(
                                 )
                                 IconButton(
                                     onClick = {
-                                        inputText = item
+                                        inputText = TextFieldValue(item, TextRange(item.length))
                                     },
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(36.dp)
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.NorthWest,
@@ -455,12 +451,6 @@ fun UnifiedBottomCommandBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(56.dp)
-                .shadow(
-                    elevation = 10.dp,
-                    shape = RoundedCornerShape(24.dp),
-                    ambientColor = Color(0x33000000),
-                    spotColor = Color(0x40000000)
-                )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Slim Progress Indicator along the top edge of the floating bar
@@ -540,11 +530,11 @@ fun UnifiedBottomCommandBar(
                                         keyboardType = KeyboardType.Uri
                                     ),
                                     keyboardActions = KeyboardActions(
-                                        onSearch = { submitNavigation(inputText) },
-                                        onGo = { submitNavigation(inputText) }
+                                        onSearch = { submitNavigation(inputText.text) },
+                                        onGo = { submitNavigation(inputText.text) }
                                     ),
                                     decorationBox = { innerTextField ->
-                                        if (inputText.isEmpty()) {
+                                        if (inputText.text.isEmpty()) {
                                             Text(
                                                 text = "Search or type URL",
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -560,13 +550,13 @@ fun UnifiedBottomCommandBar(
                                         .testTag("unified_address_input")
                                 )
 
-                                if (inputText.isNotEmpty()) {
+                                if (inputText.text.isNotEmpty()) {
                                     IconButton(
                                         onClick = {
-                                            inputText = ""
+                                            inputText = TextFieldValue("")
                                             suggestions = emptyList()
                                         },
-                                        modifier = Modifier.size(28.dp)
+                                        modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Clear,
@@ -577,10 +567,10 @@ fun UnifiedBottomCommandBar(
                                     }
                                 }
 
-                                if (inputText.isNotBlank()) {
+                                if (inputText.text.isNotBlank()) {
                                     IconButton(
-                                        onClick = { submitNavigation(inputText) },
-                                        modifier = Modifier.size(28.dp)
+                                        onClick = { submitNavigation(inputText.text) },
+                                        modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
@@ -669,7 +659,7 @@ fun UnifiedBottomCommandBar(
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     isEditing = true
                                     onEditingChanged?.invoke(true)
-                                    inputText = if (activeTab?.url == "about:blank") "" else (activeTab?.url ?: "")
+                                    inputText = if (activeTab?.url == "about:blank") TextFieldValue("") else TextFieldValue(activeTab?.url ?: "", TextRange(0, activeTab?.url?.length ?: 0))
                                 }
                                 .testTag("bottom_address_pill")
                         ) {
@@ -746,7 +736,7 @@ fun UnifiedBottomCommandBar(
                                     if (activeTab?.isLoading == true) {
                                         IconButton(
                                             onClick = onStop,
-                                            modifier = Modifier.size(26.dp)
+                                            modifier = Modifier.size(36.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Close,
@@ -758,7 +748,7 @@ fun UnifiedBottomCommandBar(
                                     } else {
                                         IconButton(
                                             onClick = onReload,
-                                            modifier = Modifier.size(26.dp)
+                                            modifier = Modifier.size(36.dp)
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.Refresh,

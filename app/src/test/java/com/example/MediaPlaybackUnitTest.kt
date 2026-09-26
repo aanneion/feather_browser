@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.media.MediaControlAction
 import com.example.media.MediaPlaybackService
 import com.example.media.MediaSessionManager
+import com.example.media.BrowserPlaybackState
 import com.example.privacy.FingerprintScriptGenerator
 import org.junit.Assert.*
 import org.junit.Before
@@ -67,28 +68,28 @@ class MediaPlaybackUnitTest {
     @Test
     fun mediaSessionManager_updatesPlaybackStateAndActions() {
         val tabId = "tab_yt_789"
-        MediaSessionManager.updatePlaybackState(context, tabId, true)
-        assertTrue(MediaSessionManager.isPlaying.value)
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        assertTrue((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
         assertEquals(tabId, MediaSessionManager.activeMediaTabId.value)
 
         // Dispatch pause action
         MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
-        assertFalse(MediaSessionManager.isPlaying.value)
+        assertFalse((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
 
         // Dispatch play action
         MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
-        assertTrue(MediaSessionManager.isPlaying.value)
+        assertTrue((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
 
         // Dispatch toggle action
         MediaSessionManager.dispatchAction(MediaControlAction.TOGGLE_PLAY_PAUSE)
-        assertFalse(MediaSessionManager.isPlaying.value)
+        assertFalse((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
 
         MediaSessionManager.dispatchAction(MediaControlAction.TOGGLE_PLAY_PAUSE)
-        assertTrue(MediaSessionManager.isPlaying.value)
+        assertTrue((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
 
         // Dispatch stop action
         MediaSessionManager.stopPlayback(context)
-        assertFalse(MediaSessionManager.isPlaying.value)
+        assertFalse((MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING))
         assertNull(MediaSessionManager.currentMetadata.value)
         assertNull(MediaSessionManager.activeMediaTabId.value)
     }
@@ -107,7 +108,7 @@ class MediaPlaybackUnitTest {
         assertTrue("Script must use stopImmediatePropagation", script.contains("stopImmediatePropagation"))
 
         // HTMLMediaElement pause override
-        assertTrue("Script must hook HTMLMediaElement.prototype.pause", script.contains("HTMLMediaElement.prototype.pause"))
+        assertTrue("Script must hook IntersectionObserver", script.contains("IntersectionObserver"))
 
         // Global media actions for notification controls
         assertTrue("Script must define __feather_media_play", script.contains("window.__feather_media_play"))

@@ -16,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.example.MainActivity
 import com.example.R
+import android.util.LruCache
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +38,8 @@ class MediaPlaybackService : Service() {
         const val ACTION_NEXT = "com.example.media.NEXT"
         const val ACTION_PREV = "com.example.media.PREV"
         const val ACTION_STOP = "com.example.media.STOP"
+
+        private val artworkCache = LruCache<String, Bitmap>(20)
     }
 
     private var mediaSession: MediaSessionCompat? = null
@@ -50,7 +53,9 @@ class MediaPlaybackService : Service() {
         setupMediaSession()
 
         val metadata = MediaSessionManager.currentMetadata.value
-        val isPlaying = MediaSessionManager.isPlaying.value
+        val playbackState = MediaSessionManager.playbackState.value
+        val isPlaying = playbackState == BrowserPlaybackState.PLAYING || playbackState == BrowserPlaybackState.BUFFERING
+        val isBuffering = playbackState == BrowserPlaybackState.BUFFERING
 
         val title = metadata?.title?.ifBlank { "Media Playback" } ?: "Media Playback"
         val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "Feather Browser"
@@ -146,7 +151,7 @@ class MediaPlaybackService : Service() {
 
     private fun updateNotificationAndSession() {
         val metadata = MediaSessionManager.currentMetadata.value
-        val isPlaying = MediaSessionManager.isPlaying.value
+        val isPlaying = (MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING)
 
         if (metadata == null && !isPlaying) {
             mediaSession?.setActive(false)
@@ -160,10 +165,15 @@ class MediaPlaybackService : Service() {
         val title = metadata?.title?.ifBlank { "Media Playing" } ?: "Media Playing"
         val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "YouTube"
         val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
-        val artworkUrl = metadata?.artworkUrl ?: ""
+        val artworkUrl = metadata?.artworkUrl?.trim() ?: ""
+        val cachedBmp = if (artworkUrl.isNotBlank()) artworkCache.get(artworkUrl) else null
+        if (cachedBmp != null) {
+            cachedArtworkBitmap = cachedBmp
+            cachedArtworkUrl = artworkUrl
+        }
 
         // Update MediaSession state
-        val state = if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
+        val isBuffering = MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING; val state = if (isBuffering) PlaybackStateCompat.STATE_BUFFERING else if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
         val playbackState = PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
@@ -196,14 +206,29 @@ class MediaPlaybackService : Service() {
             manager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) { }
 
-        // Asynchronously fetch artwork if new URL provided
-        if (artworkUrl.isNotBlank() && artworkUrl != cachedArtworkUrl) {
+        // Asynchronously fetch artwork if new URL provided and not yet cached
+        if (artworkUrl.isNotBlank() && cachedArtworkBitmap == null && artworkUrl != cachedArtworkUrl) {
             cachedArtworkUrl = artworkUrl
             serviceScope.launch {
                 val bmp = fetchBitmap(artworkUrl)
                 if (bmp != null) {
+                    artworkCache.put(artworkUrl, bmp)
                     cachedArtworkBitmap = bmp
-                    val updatedNotification = buildNotification(title, artist, album, isPlaying, bmp)
+
+                    // Update MediaSession metadata with artwork for Android 11+ System Media Carousel
+                    val currentPlaybackState = MediaSessionManager.playbackState.value
+                    val currentIsPlaying = currentPlaybackState == BrowserPlaybackState.PLAYING || currentPlaybackState == BrowserPlaybackState.BUFFERING
+
+                    val updatedMeta = MediaMetadataCompat.Builder()
+                        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
+                        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
+                        .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+                        .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
+                        .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
+                        .build()
+                    mediaSession?.setMetadata(updatedMeta)
+
+                    val updatedNotification = buildNotification(title, artist, album, currentIsPlaying, bmp)
                     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                     manager.notify(NOTIFICATION_ID, updatedNotification)
                 }
@@ -311,14 +336,43 @@ class MediaPlaybackService : Service() {
 
     private suspend fun fetchBitmap(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
         try {
-            val url = URL(urlString)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.doInput = true
-            connection.connectTimeout = 3000
-            connection.readTimeout = 3000
+            val cleanUrl = when {
+                urlString.startsWith("//") -> "https:$urlString"
+                urlString.startsWith("/") -> "https://www.youtube.com$urlString"
+                else -> urlString
+            }
+            val url = URL(cleanUrl)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                doInput = true
+                instanceFollowRedirects = true
+                connectTimeout = 4000
+                readTimeout = 4000
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+                )
+            }
             connection.connect()
-            val input = connection.inputStream
-            BitmapFactory.decodeStream(input)
+            if (connection.responseCode in 200..299) {
+                java.io.BufferedInputStream(connection.inputStream).use { stream ->
+                    val rawBmp = BitmapFactory.decodeStream(stream)
+                    if (rawBmp != null) {
+                        val maxDim = 512
+                        if (rawBmp.width > maxDim || rawBmp.height > maxDim) {
+                            val ratio = rawBmp.width.toFloat() / rawBmp.height.toFloat()
+                            val targetW = if (ratio >= 1f) maxDim else (maxDim * ratio).toInt().coerceAtLeast(1)
+                            val targetH = if (ratio >= 1f) (maxDim / ratio).toInt().coerceAtLeast(1) else maxDim
+                            Bitmap.createScaledBitmap(rawBmp, targetW, targetH, true)
+                        } else {
+                            rawBmp
+                        }
+                    } else {
+                        null
+                    }
+                }
+            } else {
+                null
+            }
         } catch (e: Exception) {
             null
         }
@@ -346,7 +400,7 @@ class MediaPlaybackService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        if (!MediaSessionManager.isPlaying.value) {
+        if (!(MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING)) {
             MediaSessionManager.stopPlayback(this)
             mediaSession?.setActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)

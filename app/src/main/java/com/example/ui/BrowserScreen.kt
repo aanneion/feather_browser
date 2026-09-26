@@ -298,9 +298,24 @@ fun BrowserScreen(
             }
 
             // Keep status bar and navigation bar insets cleanly separated from web content
-            // so web page elements (like YouTube's bottom navigation menu) never collide with browser toolbars
-            val effectiveTopPadding = innerPadding.calculateTopPadding()
-            val effectiveBottomPadding = innerPadding.calculateBottomPadding()
+            // so web page elements (like YouTube's bottom navigation menu) never collide with browser toolbars.
+            // Decoupled from intermediate frame-by-frame innerPadding animations so WebView does NOT thrash layout
+            // or trigger progressive space reclamation during scroll or address bar dismiss.
+            val density = androidx.compose.ui.platform.LocalDensity.current
+            val statusBarTopDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
+            val navBarBottomDp = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
+            val areBarsVisible = isBarsVisible || isHome || isFindInPageActive || isAddressBarEditing
+
+            val effectiveTopPadding = when {
+                isFindInPageActive -> statusBarTopDp + 56.dp
+                toolbarPosition == ToolbarPosition.TOP -> if (areBarsVisible) statusBarTopDp + 56.dp else statusBarTopDp
+                else -> statusBarTopDp
+            }
+            val effectiveBottomPadding = when {
+                toolbarPosition == ToolbarPosition.BOTTOM -> if (areBarsVisible && !isFindInPageActive) navBarBottomDp + 56.dp else 0.dp
+                toolbarPosition == ToolbarPosition.TOP -> if (areBarsVisible) navBarBottomDp + 48.dp else 0.dp
+                else -> 0.dp
+            }
 
             Box(
                 modifier = Modifier
@@ -335,7 +350,14 @@ fun BrowserScreen(
                                     currentProfile = currentProfile,
                                     viewModel = viewModel,
                                     actions = viewModel.webViewActionEvent,
-                                    isActive = isActive
+                                    isActive = isActive,
+                                    isAddressBarEditing = isAddressBarEditing,
+                                    onDismissAddressBar = {
+                                        if (isAddressBarEditing) {
+                                            isAddressBarEditing = false
+                                            focusManager.clearFocus(force = true)
+                                        }
+                                    }
                             )
                         }
                     }
@@ -633,10 +655,9 @@ fun BrowserScreen(
             onOpenClearData = { showClearDataDialog = true },
             onOpenSettings = { viewModel.openSheet(ActiveSheet.SETTINGS) },
             onExitBrowser = {
+                MediaSessionManager.stopPlayback(context)
                 val activity = context as? android.app.Activity
                 activity?.finishAndRemoveTask()
-                activity?.finishAffinity()
-                android.os.Process.killProcess(android.os.Process.myPid())
             },
             onDismiss = { showMenuSheet = false }
         )
