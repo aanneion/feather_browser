@@ -1,5 +1,6 @@
 package com.example.media
 
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -249,6 +250,13 @@ object MediaSessionManager {
                 action = MediaPlaybackService.ACTION_STOP
             }
             context.startService(intent)
-        } catch (e: Exception) { }
+        } catch (e: Exception) {
+            // If the service isn't running (or background start limits apply), there is
+            // nothing to stop; make sure a stale notification can't linger.
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                manager?.cancel(MediaPlaybackService.NOTIFICATION_ID)
+            } catch (ex: Exception) { }
+        }
     }
 }

@@ -30,6 +30,7 @@ class MediaPlaybackService : Service() {
     companion object {
         const val CHANNEL_ID = "feather_media_playback_channel_v4"
         const val NOTIFICATION_ID = 2001
+        private const val TAG = "MediaPlaybackService"
 
         const val ACTION_UPDATE_STATE = "com.example.media.UPDATE_STATE"
         const val ACTION_PLAY = "com.example.media.PLAY"
@@ -40,22 +41,79 @@ class MediaPlaybackService : Service() {
         const val ACTION_STOP = "com.example.media.STOP"
 
         private val artworkCache = LruCache<String, Bitmap>(20)
+
+        /**
+         * Creates the media notification channel. Safe to call from anywhere (also invoked
+         * early from BrowserApplication.onCreate so the channel exists before the service
+         * needs it). Idempotent.
+         */
+        fun createNotificationChannel(context: Context) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "Media Playback",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Background audio and media playback controls"
+                    setShowBadge(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                    setSound(null, null)
+                    enableVibration(false)
+                }
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                manager.createNotificationChannel(channel)
+            }
+        }
+
+        /** One-line diagnostic snapshot of the notification presentation state. */
+        private fun logNotificationState(context: Context, where: String) {
+            try {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                val enabled = manager.areNotificationsEnabled()
+                var postPermission = "n/a"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    postPermission = if (context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) "GRANTED" else "DENIED"
+                }
+                val channel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                    manager.getNotificationChannel(CHANNEL_ID) else null
+                android.util.Log.i(
+                    TAG,
+                    "[$where] notificationsEnabled=$enabled postNotifications=$postPermission " +
+                        "channel=${if (channel != null) "exists(importance=${channel.importance})" else "MISSING"}"
+                )
+            } catch (e: Throwable) {
+                android.util.Log.e(TAG, "[$where] notification state diagnostics failed", e)
+            }
+        }
     }
 
     private var mediaSession: MediaSessionCompat? = null
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var cachedArtworkUrl: String = ""
     private var cachedArtworkBitmap: Bitmap? = null
+    // Set when the service is (re)started solely to process a STOP command, so onCreate
+    // does not promote an empty service to foreground and briefly post a phantom notification.
+    private var pendingStop = false
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createNotificationChannel(this)
         setupMediaSession()
 
         val metadata = MediaSessionManager.currentMetadata.value
         val playbackState = MediaSessionManager.playbackState.value
         val isPlaying = playbackState == BrowserPlaybackState.PLAYING || playbackState == BrowserPlaybackState.BUFFERING
-        val isBuffering = playbackState == BrowserPlaybackState.BUFFERING
+
+        if (metadata == null && !isPlaying) {
+            // Nothing to present yet (e.g. service started only to receive ACTION_STOP).
+            // Skip foreground promotion; onStartCommand will stop us immediately.
+            pendingStop = true
+            android.util.Log.i(TAG, "onCreate: no active playback -> skipping foreground promotion")
+            return
+        }
+        logNotificationState(this, "onCreate")
 
         val title = metadata?.title?.ifBlank { "Media Playback" } ?: "Media Playback"
         val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "Feather Browser"
@@ -123,6 +181,7 @@ class MediaPlaybackService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_UPDATE_STATE
+        android.util.Log.i(TAG, "onStartCommand action=$action startId=$startId pendingStop=$pendingStop")
 
         when (action) {
             ACTION_PLAY -> MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
@@ -140,6 +199,23 @@ class MediaPlaybackService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_UPDATE_STATE -> {
+                if (pendingStop) {
+                    // onCreate skipped foreground promotion because there was no active
+                    // playback at that moment. Re-check now: if state arrived in between,
+                    // run the normal update path; otherwise shut down cleanly without ever
+                    // having posted a notification.
+                    val metadata = MediaSessionManager.currentMetadata.value
+                    val ps = MediaSessionManager.playbackState.value
+                    val active = metadata != null ||
+                        ps == BrowserPlaybackState.PLAYING || ps == BrowserPlaybackState.BUFFERING
+                    if (!active) {
+                        android.util.Log.i(TAG, "ACTION_UPDATE_STATE with no active playback -> stopping without posting notification")
+                        mediaSession?.setActive(false)
+                        stopSelf()
+                        return START_NOT_STICKY
+                    }
+                    pendingStop = false
+                }
                 updateNotificationAndSession()
                 return START_NOT_STICKY
             }
@@ -326,11 +402,18 @@ class MediaPlaybackService : Service() {
             } else {
                 startForeground(NOTIFICATION_ID, notification)
             }
+            android.util.Log.i(TAG, "startForeground OK id=$NOTIFICATION_ID")
         } catch (e: Exception) {
+            // Never let foreground promotion (or artwork state) prevent the notification
+            // from being presented: fall back to a plain notify().
+            android.util.Log.e(TAG, "startForeground FAILED: ${e.message}", e)
+            logNotificationState(this, "promoteToForeground-fallback")
             try {
                 val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 notificationManager.notify(NOTIFICATION_ID, notification)
-            } catch (ex: Exception) { }
+            } catch (ex: Exception) {
+                android.util.Log.e(TAG, "fallback notify() also failed", ex)
+            }
         }
     }
 
@@ -378,23 +461,7 @@ class MediaPlaybackService : Service() {
         }
     }
 
-    private fun createNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "Media Playback",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Background audio and media playback controls"
-                setShowBadge(false)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                setSound(null, null)
-                enableVibration(false)
-            }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
-        }
-    }
+    private fun createNotificationChannel() = createNotificationChannel(this)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
