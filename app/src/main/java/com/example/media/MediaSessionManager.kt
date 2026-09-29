@@ -77,10 +77,12 @@ object MediaSessionManager {
     ) {
         val cleanTitle = title.trim().ifBlank { "Playing Audio" }
         val cleanArtist = artist.trim().ifBlank { "Feather Browser" }
+        val current = _currentMetadata.value
+        val isSameTrack = current?.tabId == tabId && current.title == cleanTitle
         val effectiveArtworkUrl = if (artworkUrl.isNotBlank()) {
             artworkUrl
-        } else if (_currentMetadata.value?.tabId == tabId && _currentMetadata.value?.artworkUrl?.isNotBlank() == true) {
-            _currentMetadata.value!!.artworkUrl
+        } else if (isSameTrack && current.artworkUrl.isNotBlank()) {
+            current.artworkUrl
         } else {
             ""
         }

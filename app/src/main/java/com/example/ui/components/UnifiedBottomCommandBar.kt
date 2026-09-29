@@ -176,8 +176,13 @@ fun UnifiedBottomCommandBar(
     val navBarBottomDp = with(density) { WindowInsets.navigationBars.getBottom(density).toDp() }
     val statusBarTopDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
 
-    // Use IME height when keyboard is shown so the bar floats immediately above the keyboard
-    val effectiveBottomInset = maxOf(imeBottomDp, navBarBottomDp)
+    // Use IME height ONLY when actively editing the address/search bar so the bar and suggestions float above the keyboard.
+    // When typing into a web page (e.g. Google search box, forms, chat), the bottom bar stays in place at the bottom.
+    val effectiveBottomInset = if (isEditing) {
+        maxOf(imeBottomDp, navBarBottomDp)
+    } else {
+        navBarBottomDp
+    }
 
     // Calculate maximum available height for suggestions so it never collides with status bar or dock
     val suggestionsMaxHeight = (screenHeightDp - effectiveBottomInset - statusBarTopDp - 76.dp)

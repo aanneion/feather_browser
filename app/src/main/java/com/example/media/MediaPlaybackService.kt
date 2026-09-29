@@ -242,10 +242,15 @@ class MediaPlaybackService : Service() {
         val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "YouTube"
         val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
         val artworkUrl = metadata?.artworkUrl?.trim() ?: ""
-        val cachedBmp = if (artworkUrl.isNotBlank()) artworkCache.get(artworkUrl) else null
-        if (cachedBmp != null) {
-            cachedArtworkBitmap = cachedBmp
-            cachedArtworkUrl = artworkUrl
+
+        if (artworkUrl.isNotBlank()) {
+            if (artworkUrl != cachedArtworkUrl) {
+                cachedArtworkUrl = artworkUrl
+                cachedArtworkBitmap = artworkCache.get(artworkUrl)
+            }
+        } else {
+            cachedArtworkUrl = ""
+            cachedArtworkBitmap = null
         }
 
         // Update MediaSession state
@@ -282,31 +287,40 @@ class MediaPlaybackService : Service() {
             manager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) { }
 
-        // Asynchronously fetch artwork if new URL provided and not yet cached
-        if (artworkUrl.isNotBlank() && cachedArtworkBitmap == null && artworkUrl != cachedArtworkUrl) {
-            cachedArtworkUrl = artworkUrl
+        // Asynchronously fetch artwork if new URL provided and not yet cached in memory
+        if (artworkUrl.isNotBlank() && cachedArtworkBitmap == null) {
+            val targetUrl = artworkUrl
             serviceScope.launch {
-                val bmp = fetchBitmap(artworkUrl)
+                val bmp = fetchBitmap(targetUrl)
                 if (bmp != null) {
-                    artworkCache.put(artworkUrl, bmp)
-                    cachedArtworkBitmap = bmp
+                    artworkCache.put(targetUrl, bmp)
+                    if (cachedArtworkUrl == targetUrl) {
+                        cachedArtworkBitmap = bmp
 
-                    // Update MediaSession metadata with artwork for Android 11+ System Media Carousel
-                    val currentPlaybackState = MediaSessionManager.playbackState.value
-                    val currentIsPlaying = currentPlaybackState == BrowserPlaybackState.PLAYING || currentPlaybackState == BrowserPlaybackState.BUFFERING
+                        // Update MediaSession metadata with artwork for Android 11+ System Media Carousel
+                        val latestMeta = MediaSessionManager.currentMetadata.value
+                        val currentPlaybackState = MediaSessionManager.playbackState.value
+                        val currentIsPlaying = currentPlaybackState == BrowserPlaybackState.PLAYING || currentPlaybackState == BrowserPlaybackState.BUFFERING
 
-                    val updatedMeta = MediaMetadataCompat.Builder()
-                        .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
-                        .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
-                        .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
-                        .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
-                        .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
-                        .build()
-                    mediaSession?.setMetadata(updatedMeta)
+                        val updatedMeta = MediaMetadataCompat.Builder()
+                            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, latestMeta?.title ?: title)
+                            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, latestMeta?.artist ?: artist)
+                            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, latestMeta?.album ?: album)
+                            .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
+                            .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
+                            .build()
+                        mediaSession?.setMetadata(updatedMeta)
 
-                    val updatedNotification = buildNotification(title, artist, album, currentIsPlaying, bmp)
-                    val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                    manager.notify(NOTIFICATION_ID, updatedNotification)
+                        val updatedNotification = buildNotification(
+                            title = latestMeta?.title ?: title,
+                            artist = latestMeta?.artist ?: artist,
+                            album = latestMeta?.album ?: album,
+                            isPlaying = currentIsPlaying,
+                            artwork = bmp
+                        )
+                        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                        manager?.notify(NOTIFICATION_ID, updatedNotification)
+                    }
                 }
             }
         }

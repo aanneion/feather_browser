@@ -355,6 +355,13 @@ object FingerprintScriptGenerator {
                 } catch(e) {}
 
                 // 5. Media control methods callable from notification bar
+                function scheduleTrackChecks() {
+                    setTimeout(monitorMedia, 250);
+                    setTimeout(monitorMedia, 700);
+                    setTimeout(monitorMedia, 1500);
+                    setTimeout(monitorMedia, 3000);
+                }
+
                 window.__feather_media_play = function() {
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['play'] === 'function') {
@@ -430,6 +437,7 @@ object FingerprintScriptGenerator {
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['nexttrack'] === 'function') {
                             window.__feather_actions['nexttrack']();
+                            scheduleTrackChecks();
                             return;
                         }
                     } catch(e) {}
@@ -440,12 +448,14 @@ object FingerprintScriptGenerator {
                         const recVideo = document.querySelector('ytd-compact-video-renderer a#thumbnail, ytm-compact-video-renderer a#thumbnail');
                         if (recVideo) recVideo.click();
                     }
+                    scheduleTrackChecks();
                 };
 
                 window.__feather_media_prev = function() {
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['previoustrack'] === 'function') {
                             window.__feather_actions['previoustrack']();
+                            scheduleTrackChecks();
                             return;
                         }
                     } catch(e) {}
@@ -455,11 +465,13 @@ object FingerprintScriptGenerator {
                     } else {
                         window.history.back();
                     }
+                    scheduleTrackChecks();
                 };
 
                 // 6. Periodic monitor & watchdog for HTML media elements
                 let lastReportedState = null;
                 let lastReportedTitle = '';
+                let lastReportedArt = '';
 
                 function hookMediaElement(el) {
                     if (!el || el.__feather_monitored) return;
@@ -514,9 +526,11 @@ object FingerprintScriptGenerator {
                         }
 
                         const currentTitle = getMediaTitle();
-                        if (anyPlaying !== lastReportedState || (anyPlaying && currentTitle !== lastReportedTitle)) {
+                        const currentArt = getMediaThumbnail();
+                        if (anyPlaying !== lastReportedState || (anyPlaying && (currentTitle !== lastReportedTitle || currentArt !== lastReportedArt))) {
                             lastReportedState = anyPlaying;
                             lastReportedTitle = currentTitle;
+                            lastReportedArt = currentArt;
                             if (anyPlaying || wasActivePlayback) {
                                 notifyMediaBridge(anyPlaying);
                             }
@@ -526,6 +540,9 @@ object FingerprintScriptGenerator {
                 if (!window.__feather_media_interval) {
                     window.__feather_media_interval = setInterval(monitorMedia, 1500);
                 }
+                window.addEventListener('popstate', scheduleTrackChecks);
+                window.addEventListener('yt-navigate-finish', scheduleTrackChecks);
+                window.addEventListener('yt-page-data-updated', scheduleTrackChecks);
                 monitorMedia();
             } catch(e) {}
         })();
