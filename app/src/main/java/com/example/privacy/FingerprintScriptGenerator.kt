@@ -523,7 +523,9 @@ object FingerprintScriptGenerator {
                         }
                     } catch(e) {}
                 };
-                setInterval(monitorMedia, 800);
+                if (!window.__feather_media_interval) {
+                    window.__feather_media_interval = setInterval(monitorMedia, 1500);
+                }
                 monitorMedia();
             } catch(e) {}
         })();
@@ -531,8 +533,7 @@ object FingerprintScriptGenerator {
     }
 
     /**
-     * Injects CSS and JS overrides to ensure websites adhere to the browser's theme setting
-     * (e.g. Light mode when selected, preventing unwanted dark mode detection).
+     * Injects CSS and JS overrides to ensure websites adhere to the browser's theme setting.
      */
     fun generateThemeScript(isDark: Boolean): String {
         val targetScheme = if (isDark) "dark" else "light"
@@ -542,23 +543,19 @@ object FingerprintScriptGenerator {
                 const targetScheme = '$targetScheme';
                 const isDark = $isDark;
 
-                // 1. Set documentElement color-scheme
                 if (document.documentElement) {
                     document.documentElement.style.colorScheme = targetScheme;
                 }
-
-                // 2. Add or update meta color-scheme tag
                 let meta = document.querySelector('meta[name="color-scheme"]');
-                if (!meta) {
+                if (!meta && document.head) {
                     meta = document.createElement('meta');
                     meta.name = 'color-scheme';
-                    if (document.head) document.head.appendChild(meta);
-                }
-                if (meta) {
+                    meta.content = targetScheme;
+                    document.head.appendChild(meta);
+                } else if (meta) {
                     meta.content = targetScheme;
                 }
 
-                // 3. Configure CSS overrides and DOM theme attributes
                 const darkClasses = ['dark', 'theme-dark', 'dark-theme', 'theme--dark'];
                 let style = document.getElementById('__feather_theme_override');
 
@@ -609,35 +606,6 @@ object FingerprintScriptGenerator {
                         localStorage.setItem('yt-theme', 'light');
                     } catch(e) {}
                 }
-
-                // 4. Spoof window.matchMedia for prefers-color-scheme media queries
-                const origMatchMedia = window.matchMedia;
-                window.matchMedia = function(query) {
-                    if (!query) return origMatchMedia ? origMatchMedia.call(window, query) : null;
-                    const q = String(query).toLowerCase();
-                    if (q.indexOf('prefers-color-scheme') !== -1) {
-                        const isDarkQuery = q.indexOf('dark') !== -1;
-                        const isLightQuery = q.indexOf('light') !== -1;
-                        let matches = false;
-                        if (isDark) {
-                            matches = isDarkQuery && !isLightQuery;
-                        } else {
-                            matches = isLightQuery && !isDarkQuery;
-                        }
-                        const mql = origMatchMedia ? origMatchMedia.call(window, query) : {};
-                        return {
-                            matches: matches,
-                            media: query,
-                            onchange: null,
-                            addListener: function(fn) { if (mql && mql.addListener) mql.addListener(fn); },
-                            removeListener: function(fn) { if (mql && mql.removeListener) mql.removeListener(fn); },
-                            addEventListener: function(type, fn, opt) { if (mql && mql.addEventListener) mql.addEventListener(type, fn, opt); },
-                            removeEventListener: function(type, fn, opt) { if (mql && mql.removeEventListener) mql.removeEventListener(type, fn, opt); },
-                            dispatchEvent: function(e) { return mql && mql.dispatchEvent ? mql.dispatchEvent(e) : true; }
-                        };
-                    }
-                    return origMatchMedia ? origMatchMedia.call(window, query) : null;
-                };
             } catch(e) {}
         })();
         """.trimIndent()

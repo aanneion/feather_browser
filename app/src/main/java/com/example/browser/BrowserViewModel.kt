@@ -428,15 +428,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         // Initialize ContentBlocker with persistent preferences so blocked statistics survive app restarts
         ContentBlocker.initialize(preferences)
 
-        val defaultTabId = UUID.randomUUID().toString()
-        _activeTabId.value = defaultTabId
-        _activeTabState.value = ActiveTabState(
-            id = defaultTabId,
-            profileId = "default_personal",
-            url = "",
-            title = "New Tab",
-            isPrivate = false
-        )
         viewModelScope.launch {
             repository.initializeDefaultProfilesIfNeeded()
             repository.initializeDefaultShortcutsIfNeeded("default_personal")
@@ -456,24 +447,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 _normalTabs.value = tabs
                 if (!_isPrivateMode.value) {
                     if (tabs.isEmpty()) {
-                        // Create and persist initial tab for this profile if empty
-                        val initialTabId = UUID.randomUUID().toString()
-                        val initialTab = BrowserTab(
-                            id = initialTabId,
-                            profileId = profileId,
-                            url = "",
-                            title = "New Tab",
-                            isPrivate = false
-                        )
-                        _activeTabId.value = initialTabId
-                        _activeTabState.value = ActiveTabState(
-                            id = initialTabId,
-                            profileId = profileId,
-                            url = "",
-                            title = "New Tab",
-                            isPrivate = false
-                        )
-                        repository.saveTab(initialTab)
+                        _activeTabId.value = ""
+                        _activeTabState.value = null
                     } else {
                         val currentTabId = _activeTabId.value
                         val existingTab = tabs.find { it.id == currentTabId }
@@ -660,7 +635,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     selectTab(remaining[nextIndex].id, autoDismiss = false)
                 }
             } else {
-                createNewTab(isPrivate = _isPrivateMode.value, autoDismiss = false)
+                _activeTabId.value = ""
+                _activeTabState.value = null
             }
         }
     }
@@ -671,20 +647,12 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 com.example.media.MediaSessionManager.stopPlayback(context)
             } catch (e: Throwable) { }
             val profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value
-            val singleTab = repository.resetTabsToSingleTab(profileId, _isPrivateMode.value)
+            repository.clearTabsForProfile(profileId, _isPrivateMode.value)
             if (_isPrivateMode.value) {
                 privacyManager.cleanPrivateSessionData()
             }
-            _activeTabId.value = singleTab.id
-            _activeTabState.value = ActiveTabState(
-                id = singleTab.id,
-                profileId = singleTab.profileId,
-                url = "",
-                title = "New Tab",
-                isPrivate = singleTab.isPrivate,
-                isDesktopMode = false,
-                blockedCount = 0
-            )
+            _activeTabId.value = ""
+            _activeTabState.value = null
         }
     }
 
@@ -739,36 +707,46 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun reload() {
         setBarsVisible(true)
         val tabId = _activeTabId.value
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId)) }
+        if (tabId.isNotBlank()) {
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId)) }
+        }
     }
 
     fun stopLoading() {
         val tabId = _activeTabId.value
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId)) }
+        if (tabId.isNotBlank()) {
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId)) }
+        }
     }
 
     fun goBack() {
         setBarsVisible(true)
         val tabId = _activeTabId.value
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoBack(targetTabId = tabId)) }
+        if (tabId.isNotBlank()) {
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoBack(targetTabId = tabId)) }
+        }
     }
 
     fun goForward() {
         setBarsVisible(true)
         val tabId = _activeTabId.value
-        viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoForward(targetTabId = tabId)) }
+        if (tabId.isNotBlank()) {
+            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.GoForward(targetTabId = tabId)) }
+        }
     }
 
     fun goHome() {
         setBarsVisible(true)
         val tabId = _activeTabId.value
         _activeTabState.update { it?.copy(url = "", title = "New Tab", progress = 0, isLoading = false) }
-        viewModelScope.launch {
-            _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId))
-            _webViewActionEvent.emit(WebViewAction.LoadUrl("about:blank", targetTabId = tabId))
-            val cur = currentTabs.value.find { it.id == tabId }
-            if (cur != null) {
-                repository.saveTab(cur.copy(url = "", title = "New Tab", lastAccessedAt = System.currentTimeMillis()))
+        if (tabId.isNotBlank()) {
+            viewModelScope.launch {
+                _webViewActionEvent.emit(WebViewAction.StopLoading(targetTabId = tabId))
+                _webViewActionEvent.emit(WebViewAction.LoadUrl("about:blank", targetTabId = tabId))
+                val cur = currentTabs.value.find { it.id == tabId }
+                if (cur != null) {
+                    repository.saveTab(cur.copy(url = "", title = "New Tab", lastAccessedAt = System.currentTimeMillis()))
+                }
             }
         }
     }

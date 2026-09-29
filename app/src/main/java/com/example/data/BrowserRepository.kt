@@ -90,33 +90,14 @@ class BrowserRepository(private val database: AppDatabase) {
                     fingerprintPreset = "DEFAULT"
                 )
             )
-            database.profileDao().insertProfile(
-                BrowserProfile(
-                    id = "work",
-                    displayName = "Work",
-                    iconName = "work",
-                    colorHex = "#10B981",
-                    fingerprintPreset = "WINDOWS_DESKTOP"
-                )
-            )
-            database.profileDao().insertProfile(
-                BrowserProfile(
-                    id = "university",
-                    displayName = "University",
-                    iconName = "school",
-                    colorHex = "#8B5CF6",
-                    fingerprintPreset = "MAC_DESKTOP"
-                )
-            )
-            database.profileDao().insertProfile(
-                BrowserProfile(
-                    id = "testing",
-                    displayName = "Testing",
-                    iconName = "science",
-                    colorHex = "#F59E0B",
-                    fingerprintPreset = "ANONYMOUS_STEALTH"
-                )
-            )
+        }
+        // Remove legacy pre-seeded default profiles so the browser ships with the default "personal" profile only
+        val legacyDefaultProfileIds = listOf("work", "university", "testing")
+        for (legacyId in legacyDefaultProfileIds) {
+            database.tabDao().deleteTabsForProfile(legacyId)
+            database.bookmarkDao().deleteBookmarksForProfile(legacyId)
+            database.historyDao().deleteHistoryForProfile(legacyId)
+            database.profileDao().deleteProfileById(legacyId)
         }
     }
 
@@ -166,6 +147,14 @@ class BrowserRepository(private val database: AppDatabase) {
 
     suspend fun clearPrivateTabs() = withContext(Dispatchers.IO) {
         database.tabDao().deleteAllPrivateTabs()
+    }
+
+    suspend fun clearTabsForProfile(profileId: String, isPrivate: Boolean) = withContext(Dispatchers.IO) {
+        if (isPrivate) {
+            database.tabDao().deleteAllPrivateTabs()
+        } else {
+            database.tabDao().deleteNormalTabsForProfile(profileId)
+        }
     }
 
     suspend fun resetTabsToSingleTab(profileId: String, isPrivate: Boolean): BrowserTab = withContext(Dispatchers.IO) {

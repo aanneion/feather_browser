@@ -29,12 +29,10 @@ android {
   val debugKeystore = file("${rootDir}/debug.keystore")
   signingConfigs {
     create("debugConfig") {
-      if (debugKeystore.exists()) {
-        storeFile = debugKeystore
-        storePassword = "android"
-        keyAlias = "androiddebugkey"
-        keyPassword = "android"
-      }
+      storeFile = file("${rootDir}/debug.keystore")
+      storePassword = "android"
+      keyAlias = "androiddebugkey"
+      keyPassword = "android"
     }
     create("releaseConfig") {
       if (releaseKeystore != null && releaseKeystore.exists()) {
@@ -121,11 +119,11 @@ dependencies {
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
 
-  androidTestImplementation(platform(libs.androidx.compose.bom))
-  androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-  androidTestImplementation(libs.androidx.espresso.core)
-  androidTestImplementation(libs.androidx.junit)
-  androidTestImplementation(libs.androidx.runner)
+  // androidTestImplementation(platform(libs.androidx.compose.bom))
+  // androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+  // androidTestImplementation(libs.androidx.espresso.core)
+  // androidTestImplementation(libs.androidx.junit)
+  // androidTestImplementation(libs.androidx.runner)
 
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)

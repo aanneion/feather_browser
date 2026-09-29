@@ -46,6 +46,17 @@ import com.example.browser.HttpsMode
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
+private fun isMediaSite(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    val host = try { Uri.parse(url).host?.lowercase() ?: "" } catch (e: Exception) { "" }
+    return host.contains("youtube.com") || host.contains("youtu.be") ||
+           host.contains("soundcloud.com") || host.contains("spotify.com") ||
+           host.contains("twitch.tv") || host.contains("vimeo.com") ||
+           host.contains("bandcamp.com") || host.contains("dailymotion.com") ||
+           host.contains("mixcloud.com") || host.contains("audiomack.com") ||
+           host.contains("deezer.com")
+}
+
 class PersistentWebView(context: Context) : WebView(context) {
     var allowBackgroundPlayback: Boolean = true
         set(value) {
@@ -541,7 +552,7 @@ fun WebViewContainer(
                             displayZoomControls = false
                             allowFileAccess = false
                             allowContentAccess = false
-                            setSupportMultipleWindows(true)
+                            setSupportMultipleWindows(false)
                             mediaPlaybackRequiresUserGesture = false
                             cacheMode = WebSettings.LOAD_DEFAULT
 
@@ -628,20 +639,18 @@ fun WebViewContainer(
                                     canGoBack = view?.canGoBack() ?: false,
                                     canGoForward = view?.canGoForward() ?: false
                                 )
-                                try {
-                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
-                                    view?.evaluateJavascript(themeScript, null)
-                                } catch (e: Exception) { }
                             }
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
                                 super.onPageCommitVisible(view, url)
-                                try {
-                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
-                                    view?.evaluateJavascript(themeScript, null)
-                                } catch (e: Exception) { }
+                                if (isMediaSite(url ?: view?.url)) {
+                                    try {
+                                        val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
+                                        view?.evaluateJavascript(themeScript, null)
+                                    } catch (e: Exception) { }
+                                }
 
-                                if (enableBackgroundPlay) {
+                                if (enableBackgroundPlay && isMediaSite(url ?: view?.url)) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
@@ -670,14 +679,8 @@ fun WebViewContainer(
                                     canGoForward = view?.canGoForward() ?: false
                                 )
 
-                                // Enforce theme styling on page finish
-                                try {
-                                    val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
-                                    view?.evaluateJavascript(themeScript, null)
-                                } catch (e: Exception) { }
-
-                                // Inject Background Audio/Video playback script on media sites or whenever background play is enabled
-                                if (enableBackgroundPlay) {
+                                // Inject Background Audio/Video playback script ONLY on media sites when background play is enabled
+                                if (enableBackgroundPlay && isMediaSite(url ?: view?.url)) {
                                     try {
                                         val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
                                         view?.evaluateJavascript(bgScript, null)
@@ -839,38 +842,43 @@ fun WebViewContainer(
 
                         // Custom WebChromeClient
                         webChromeClient = object : WebChromeClient() {
-                            override fun onCreateWindow(
+                            override fun onJsBeforeUnload(
                                 view: WebView?,
-                                isDialog: Boolean,
-                                isUserGesture: Boolean,
-                                resultMsg: Message?
+                                url: String?,
+                                message: String?,
+                                result: JsResult?
                             ): Boolean {
-                                val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                                val popupWebView = WebView(view?.context ?: ctx).apply {
-                                    webViewClient = object : WebViewClient() {
-                                        override fun onRenderProcessGone(v: WebView?, detail: RenderProcessGoneDetail?): Boolean {
-                                            try { v?.destroy() } catch (e: Exception) { }
-                                            return true
-                                        }
-
-                                        override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
-                                            val targetUrl = request?.url?.toString() ?: return false
-                                            viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
-                                            try { v?.destroy() } catch (e: Exception) { }
-                                            return true
-                                        }
-                                        @Deprecated("Deprecated in Java")
-                                        override fun shouldOverrideUrlLoading(v: WebView?, targetUrl: String?): Boolean {
-                                            if (!targetUrl.isNullOrBlank()) {
-                                                viewModel.openLinkInNewTab(targetUrl, openInBackground = false)
-                                            }
-                                            try { v?.destroy() } catch (e: Exception) { }
-                                            return true
-                                        }
-                                    }
+                                val activity = ctx.findActivity()
+                                if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                                    result?.confirm()
+                                    return true
                                 }
-                                transport.webView = popupWebView
-                                resultMsg.sendToTarget()
+                                try {
+                                    android.app.AlertDialog.Builder(activity)
+                                        .setTitle("Leave site?")
+                                        .setMessage(
+                                            if (!message.isNullOrBlank()) message
+                                            else "Changes you made may not be saved."
+                                        )
+                                        .setPositiveButton("Leave") { _, _ ->
+                                            result?.confirm()
+                                        }
+                                        .setNegativeButton("Cancel") { _, _ ->
+                                            result?.cancel()
+                                            view?.url?.let { currentActualUrl ->
+                                                viewModel.onUrlChanged(tabId, currentActualUrl)
+                                            }
+                                        }
+                                        .setOnCancelListener {
+                                            result?.cancel()
+                                            view?.url?.let { currentActualUrl ->
+                                                viewModel.onUrlChanged(tabId, currentActualUrl)
+                                            }
+                                        }
+                                        .show()
+                                } catch (e: Exception) {
+                                    result?.confirm()
+                                }
                                 return true
                             }
 
