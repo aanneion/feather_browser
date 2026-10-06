@@ -528,13 +528,8 @@ fun WebViewContainer(
                 factory = { ctx ->
                     // Direct Activity reference so WebView retains a valid WindowManager token for HTML <select> dropdowns and dialogs
                     val activity = ctx.findActivity() ?: ctx
-                    val targetUiMode = if (effectiveDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
-                    val overrideConfig = Configuration(activity.resources.configuration).apply {
-                        uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or targetUiMode
-                    }
-                    val themedContext = activity.createConfigurationContext(overrideConfig)
 
-                    PersistentWebView(themedContext).apply {
+                    PersistentWebView(activity).apply {
                         this.isAddressBarEditing = isAddressBarEditing
                         this.onDismissAddressBar = onDismissAddressBar
                         allowBackgroundPlayback = enableBackgroundPlay
