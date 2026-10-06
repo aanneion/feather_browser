@@ -76,12 +76,16 @@ class MediaPlaybackService : Service() {
                         == android.content.pm.PackageManager.PERMISSION_GRANTED
                     ) "GRANTED" else "DENIED"
                 }
-                val channel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-                    manager.getNotificationChannel(CHANNEL_ID) else null
+                val channelImportanceStr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = manager.getNotificationChannel(CHANNEL_ID)
+                    if (channel != null) "exists(importance=${channel.importance})" else "MISSING"
+                } else {
+                    "n/a"
+                }
                 android.util.Log.i(
                     TAG,
                     "[$where] notificationsEnabled=$enabled postNotifications=$postPermission " +
-                        "channel=${if (channel != null) "exists(importance=${channel.importance})" else "MISSING"}"
+                        "channel=$channelImportanceStr"
                 )
             } catch (e: Throwable) {
                 android.util.Log.e(TAG, "[$where] notification state diagnostics failed", e)

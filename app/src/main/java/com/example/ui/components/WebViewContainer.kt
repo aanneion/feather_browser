@@ -34,6 +34,7 @@ import com.example.media.MediaSessionManager
 import com.example.media.BrowserPlaybackState
 import kotlinx.coroutines.flow.SharedFlow
 import android.content.Context
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -279,6 +280,82 @@ fun WebViewContainer(
     var defaultUserAgent by remember { mutableStateOf<String?>(null) }
     var customVideoView by remember { mutableStateOf<View?>(null) }
     var customVideoCallback by remember { mutableStateOf<WebChromeClient.CustomViewCallback?>(null) }
+    var uploadMessageCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+
+    val fileChooserLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val callback = uploadMessageCallback
+        uploadMessageCallback = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            val intentData = result.data
+            val results: Array<Uri>? = when {
+                intentData?.clipData != null -> {
+                    val clip = intentData.clipData!!
+                    Array(clip.itemCount) { clip.getItemAt(it).uri }
+                }
+                intentData?.data != null -> {
+                    arrayOf(intentData.data!!)
+                }
+                else -> null
+            }
+            callback?.onReceiveValue(results)
+        } else {
+            callback?.onReceiveValue(null)
+        }
+    }
+
+    val currentLauncher by rememberUpdatedState(fileChooserLauncher)
+
+    val onShowFileChooserImpl = remember {
+        { filePathCallback: ValueCallback<Array<Uri>>?, fileChooserParams: WebChromeClient.FileChooserParams? ->
+            uploadMessageCallback?.onReceiveValue(null)
+            uploadMessageCallback = filePathCallback
+
+            val contentIntent = try {
+                fileChooserParams?.createIntent()?.apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    if (type.isNullOrBlank()) {
+                        type = "*/*"
+                    }
+                } ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+            } catch (e: Throwable) {
+                Intent(Intent.ACTION_GET_CONTENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+            }
+
+            if (fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE) {
+                contentIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+            }
+
+            val acceptTypes = fileChooserParams?.acceptTypes?.filter { it.isNotBlank() }
+            if (!acceptTypes.isNullOrEmpty()) {
+                if (acceptTypes.size == 1) {
+                    contentIntent.type = acceptTypes[0]
+                } else {
+                    contentIntent.type = "*/*"
+                    contentIntent.putExtra(Intent.EXTRA_MIME_TYPES, acceptTypes.toTypedArray())
+                }
+            }
+
+            val chooserTitle = fileChooserParams?.title?.ifBlank { "Select File" } ?: "Select File"
+            val chooserIntent = Intent.createChooser(contentIntent, chooserTitle)
+
+            try {
+                currentLauncher.launch(chooserIntent)
+                true
+            } catch (e: Throwable) {
+                uploadMessageCallback?.onReceiveValue(null)
+                uploadMessageCallback = null
+                false
+            }
+        }
+    }
 
     val effectiveDark = enableWebDarkMode || isDarkTheme
 
@@ -417,6 +494,8 @@ fun WebViewContainer(
     DisposableEffect(tabId) {
         onDispose {
             try {
+                uploadMessageCallback?.onReceiveValue(null)
+                uploadMessageCallback = null
                 if (MediaSessionManager.activeMediaTabId.value == tabId) {
                     MediaSessionManager.onMediaEnded(context.applicationContext, tabId)
                 }
@@ -740,7 +819,16 @@ fun WebViewContainer(
                                 // Diagnostics for real-device triage of heavy-site crashes
                                 // (e.g. github.com). Log renderer/process state, then recreate.
                                 try {
-                                    val crashedRenderer = detail?.didCrash() ?: false
+                                    val crashedRenderer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        detail?.didCrash() ?: false
+                                    } else {
+                                        false
+                                    }
+                                    val rendererPriority = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        detail?.rendererPriorityAtExit()
+                                    } else {
+                                        null
+                                    }
                                     val pkgVersion = androidx.webkit.WebViewCompat
                                         .getCurrentWebViewPackage(context.applicationContext)?.versionName ?: "unknown"
                                     val memClassMb = (context.applicationContext
@@ -754,7 +842,7 @@ fun WebViewContainer(
                                     android.util.Log.e(
                                         "FeatherWebView",
                                         "onRenderProcessGone tab=$tabId didCrash=$crashedRenderer " +
-                                            "rendererOutdated=${detail?.rendererPriorityAtExit()} " +
+                                            "rendererOutdated=$rendererPriority " +
                                             "webViewPkg=$pkgVersion " +
                                             "deviceMemoryClassMb=$memClassMb " +
                                             "availMemMb=${memInfo.availMem / (1024 * 1024)} " +
@@ -946,6 +1034,14 @@ fun WebViewContainer(
                                 customVideoView = null
                                 customVideoCallback?.onCustomViewHidden()
                                 customVideoCallback = null
+                            }
+
+                            override fun onShowFileChooser(
+                                webView: WebView?,
+                                filePathCallback: ValueCallback<Array<Uri>>?,
+                                fileChooserParams: FileChooserParams?
+                            ): Boolean {
+                                return onShowFileChooserImpl(filePathCallback, fileChooserParams)
                             }
                         }
 
