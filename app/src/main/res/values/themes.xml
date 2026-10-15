@@ -1,5 +1,29 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+
+    <!--
+        WebView themes.
+
+        Chromium resolves the CSS media query `prefers-color-scheme` exclusively from the
+        `android:isLightTheme` attribute of the theme attached to the context a WebView is
+        created with — NOT from the system day/night setting and NOT from the Compose theme.
+        Without these, a device in system dark mode keeps rendering websites dark even when
+        the browser theme is set to Light.
+
+        The WebView context is wrapped in one of these styles (see WebViewContainer) so web
+        content always matches the active browser theme:
+        https://developer.android.com/develop/ui/views/layout/webapps/dark-theme
+
+        `android:isLightTheme` exists since API 29 and is safely ignored on older devices,
+        which never had a system-wide dark mode for web content anyway.
+    -->
+    <style name="Theme.Feather.Web.Light" parent="Theme.MyApplication" tools:ignore="UnusedAttribute">
+        <item name="android:isLightTheme">true</item>
+    </style>
+
+    <style name="Theme.Feather.Web.Dark" parent="Theme.MyApplication" tools:ignore="UnusedAttribute">
+        <item name="android:isLightTheme">false</item>
+    </style>
 </resources>

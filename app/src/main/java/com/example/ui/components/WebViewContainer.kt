@@ -4,7 +4,6 @@ import android.app.Activity
 import android.content.ContextWrapper
 import android.view.ContextThemeWrapper
 import android.annotation.SuppressLint
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
@@ -22,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
+import com.example.R
 import com.example.browser.BrowserViewModel
 import com.example.browser.FingerprintPreset
 import com.example.browser.WebViewAction
@@ -67,6 +67,24 @@ class PersistentWebView(context: Context) : WebView(context) {
             // re-sync real visibility so Chromium can release compositor/GPU resources.
             if (wasDisabled && !value) restoreRealVisibility()
         }
+
+    private var isReleased = false
+
+    /**
+     * Idempotent teardown for WebView recreation flows (browser theme flip / renderer crash
+     * recreation / tab close). Several flows may race to destroy the same instance, e.g. the
+     * AndroidView onRelease firing after the tab-close cleanup, so a second call is a no-op.
+     */
+    fun destroySafely() {
+        if (isReleased) return
+        isReleased = true
+        try {
+            stopLoading()
+            (parent as? ViewGroup)?.removeView(this)
+            destroy()
+        } catch (e: Throwable) { }
+    }
+
     var onScrollChangedListener: ((deltaY: Int, scrollY: Int) -> Unit)? = null
     var isAddressBarEditing: Boolean = false
     var onDismissAddressBar: (() -> Unit)? = null
@@ -263,7 +281,6 @@ fun WebViewContainer(
     isAdBlockEnabled: Boolean,
     whitelistedDomains: Set<String>,
     blockThirdPartyCookies: Boolean,
-    enableWebDarkMode: Boolean,
     enableBackgroundPlay: Boolean,
     httpsMode: HttpsMode,
     isDarkTheme: Boolean,
@@ -357,7 +374,11 @@ fun WebViewContainer(
         }
     }
 
-    val effectiveDark = enableWebDarkMode || isDarkTheme
+    // Web content always follows the active browser theme:
+    // light browser -> websites render with prefers-color-scheme: light,
+    // dark browser -> websites render with prefers-color-scheme: dark.
+    // This is enforced via the ContextThemeWrapper used to create the WebView below.
+    val effectiveDark = isDarkTheme
 
     val activePreset = remember(currentProfile?.fingerprintPreset) {
         FingerprintPreset.fromString(currentProfile?.fingerprintPreset)
@@ -518,22 +539,23 @@ fun WebViewContainer(
                 webViewRef?.apply {
                     if (this is PersistentWebView) {
                         this.allowBackgroundPlayback = false
+                        webViewClient = object : WebViewClient() {
+                            override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean = true
+                        }
+                        webChromeClient = WebChromeClient()
+                        clearHistory()
+                        this.destroySafely()
                     }
-                    stopLoading()
-                    webViewClient = object : WebViewClient() {
-                        override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean = true
-                    }
-                    webChromeClient = WebChromeClient()
-                    clearHistory()
-                    (parent as? ViewGroup)?.removeView(this)
-                    destroy()
                 }
                 webViewRef = null
             } catch (e: Throwable) { }
         }
     }
 
-    key(tabId, renderCrashCount) {
+    // Key includes `effectiveDark`: `prefers-color-scheme` is resolved by Chromium once,
+    // from the theme of the context the WebView is created with, so flipping the browser
+    // theme must recreate the WebView (reloading the tab's current URL) to re-resolve it.
+    key(tabId, renderCrashCount, effectiveDark) {
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -544,7 +566,18 @@ fun WebViewContainer(
                     // Direct Activity reference so WebView retains a valid WindowManager token for HTML <select> dropdowns and dialogs
                     val activity = ctx.findActivity() ?: ctx
 
-                    PersistentWebView(activity).apply {
+                    // Chromium derives `prefers-color-scheme` solely from the `android:isLightTheme`
+                    // attribute of the theme on the context the WebView is created with — not from
+                    // the system day/night setting and not from the Compose theme. Wrapping the
+                    // activity context in a pinned theme (see themes.xml) makes websites follow the
+                    // browser theme: light browser -> light sites, dark browser -> dark sites.
+                    // https://developer.android.com/develop/ui/views/layout/webapps/dark-theme
+                    val webThemeContext = ContextThemeWrapper(
+                        activity,
+                        if (effectiveDark) R.style.Theme_Feather_Web_Dark else R.style.Theme_Feather_Web_Light
+                    )
+
+                    PersistentWebView(webThemeContext).apply {
                         this.isAddressBarEditing = isAddressBarEditing
                         this.onDismissAddressBar = onDismissAddressBar
                         allowBackgroundPlayback = enableBackgroundPlay
@@ -672,19 +705,13 @@ fun WebViewContainer(
                             cookieManager.setAcceptThirdPartyCookies(this, !blockThirdPartyCookies)
                         }
 
-                        // Dark Mode for Web Content (aligned with active browser theme & force-dark setting)
-                        if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                            WebSettingsCompat.setForceDark(
-                                settings,
-                                if (effectiveDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
-                            )
-                        }
-                        if (effectiveDark && WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
-                            WebSettingsCompat.setForceDarkStrategy(
-                                settings,
-                                WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
-                            )
-                        }
+                        // Dark mode for web content.
+                        // `prefers-color-scheme` is driven by the ContextThemeWrapper used to create
+                        // this WebView (android:isLightTheme), so the force-dark APIs are not needed
+                        // (they are no-ops anyway for apps targeting API 33+). Algorithmic darkening
+                        // additionally darkens pages that ship no dark styles of their own while the
+                        // browser theme is dark, and must stay OFF in light mode so pages are never
+                        // auto-darkened against the browser theme.
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             settings.isAlgorithmicDarkeningAllowed = effectiveDark
                         } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
@@ -1146,40 +1173,24 @@ fun WebViewContainer(
                         webView.onDismissAddressBar = onDismissAddressBar
                     }
 
-                    // Keep web dark mode & theme styling synchronized dynamically
+                    // Keep web rendering synchronized with the active browser theme.
+                    // The WebView itself is recreated when the theme flips (see key() above) so
+                    // `prefers-color-scheme` re-resolves; here we only keep the background color
+                    // and algorithmic darkening in sync between recompositions.
                     val targetBg = if (effectiveDark) android.graphics.Color.parseColor("#121212") else android.graphics.Color.WHITE
                     webView.setBackgroundColor(targetBg)
 
-                    val targetUiMode = if (effectiveDark) Configuration.UI_MODE_NIGHT_YES else Configuration.UI_MODE_NIGHT_NO
-                    val currentConfigUiMode = webView.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
-                    if (currentConfigUiMode != targetUiMode) {
-                        val newConfig = Configuration(webView.resources.configuration).apply {
-                            uiMode = (uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or targetUiMode
-                        }
-                        webView.dispatchConfigurationChanged(newConfig)
-                    }
-
-                    if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)) {
-                        WebSettingsCompat.setForceDark(
-                            webView.settings,
-                            if (effectiveDark) WebSettingsCompat.FORCE_DARK_ON else WebSettingsCompat.FORCE_DARK_OFF
-                        )
-                    }
-                    if (WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK_STRATEGY)) {
-                        WebSettingsCompat.setForceDarkStrategy(
-                            webView.settings,
-                            if (effectiveDark) {
-                                WebSettingsCompat.DARK_STRATEGY_PREFER_WEB_THEME_OVER_USER_AGENT_DARKENING
-                            } else {
-                                WebSettingsCompat.DARK_STRATEGY_WEB_THEME_DARKENING_ONLY
-                            }
-                        )
-                    }
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                         webView.settings.isAlgorithmicDarkeningAllowed = effectiveDark
                     } else if (WebViewFeature.isFeatureSupported(WebViewFeature.ALGORITHMIC_DARKENING)) {
                         WebSettingsCompat.setAlgorithmicDarkeningAllowed(webView.settings, effectiveDark)
                     }
+                },
+                onRelease = { oldWebView ->
+                    // The WebView is recreated whenever the browser theme flips (key above).
+                    // Destroy the replaced instance so the old renderer is not leaked; the
+                    // current instance is torn down by the tab-close cleanup instead.
+                    (oldWebView as? PersistentWebView)?.destroySafely()
                 },
                 modifier = Modifier.fillMaxSize()
             )

@@ -59,7 +59,6 @@ fun BrowserScreen(
     val isAdBlockEnabled by viewModel.isAdBlockEnabled.collectAsStateWithLifecycle()
     val blockThirdPartyCookies by viewModel.blockThirdPartyCookies.collectAsStateWithLifecycle()
     val httpsMode by viewModel.httpsMode.collectAsStateWithLifecycle()
-    val enableWebDarkMode by viewModel.enableWebDarkMode.collectAsStateWithLifecycle()
     val enableBackgroundPlay by viewModel.enableBackgroundPlay.collectAsStateWithLifecycle()
     val downloadProvider by viewModel.downloadProvider.collectAsStateWithLifecycle()
     val isWeatherEnabled by viewModel.isWeatherOnNewTab.collectAsStateWithLifecycle()
@@ -383,7 +382,6 @@ fun BrowserScreen(
                                     isAdBlockEnabled = isAdBlockEnabled,
                                     whitelistedDomains = whitelistedDomains,
                                     blockThirdPartyCookies = blockThirdPartyCookies,
-                                    enableWebDarkMode = enableWebDarkMode,
                                     enableBackgroundPlay = enableBackgroundPlay,
                                     httpsMode = httpsMode,
                                     isDarkTheme = isDarkTheme,
@@ -491,8 +489,6 @@ fun BrowserScreen(
                 onToggleBlockThirdPartyCookies = { viewModel.setBlockThirdPartyCookies(it) },
                 httpsMode = httpsMode,
                 onHttpsModeChange = { viewModel.setHttpsMode(it) },
-                enableWebDarkMode = enableWebDarkMode,
-                onToggleWebDarkMode = { viewModel.setEnableWebDarkMode(it) },
                 enableBackgroundPlay = enableBackgroundPlay,
                 onToggleBackgroundPlay = { viewModel.setBackgroundPlay(it) },
                 downloadProvider = downloadProvider,

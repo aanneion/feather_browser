@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **🎨 Websites Now Follow the Browser Theme (Light/Dark)**:
+  - Websites always render with the same scheme as the browser theme setting (Light / Dark / AMOLED / System) instead of following the device-wide day/night mode — a phone in system dark mode with the browser set to Light no longer opens websites dark.
+  - `prefers-color-scheme` is now pinned via a dedicated light/dark WebView theme (`android:isLightTheme`) applied to the WebView's context, per the Android WebView dark-theme contract, instead of the untracked app theme.
+  - Switching the browser theme recreates WebViews so open pages immediately re-resolve their stylesheets; replaced WebViews are destroyed deterministically (no leaked renderers after theme flips or renderer-crash recreation).
+  - Algorithmic darkening only applies while the browser theme is dark, so pages without their own dark styles are never auto-darkened against a light browser.
+  - Removed the now-redundant "Darken Web Content" setting — web content follows the browser theme by design.
+
 ## [1.0.9] - 2026-09-03
 
 ### Added & Enhanced
