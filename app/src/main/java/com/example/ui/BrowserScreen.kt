@@ -23,6 +23,7 @@ import com.example.browser.*
 import com.example.data.model.*
 import com.example.media.MediaSessionManager
 import com.example.ui.components.*
+import kotlinx.coroutines.delay
 
 @Composable
 fun BrowserScreen(
@@ -71,6 +72,15 @@ fun BrowserScreen(
     var showMenuSheet by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
 
+    LaunchedEffect(activeSheet == ActiveSheet.DOWNLOADS) {
+        if (activeSheet == ActiveSheet.DOWNLOADS) {
+            while (true) {
+                viewModel.refreshDownloadStates()
+                delay(1500)
+            }
+        }
+    }
+
     val whitelistedDomains = remember(adBlockExceptions) {
         adBlockExceptions.filter { it.isAdBlockDisabled }.map { it.domain }.toSet()
     }
@@ -79,11 +89,24 @@ fun BrowserScreen(
     val isHome = currentUrl.isBlank() || currentUrl == "about:blank"
     val isSiteWhitelisted = remember(currentUrl, whitelistedDomains) {
         val domain = UrlUtils.extractDomain(currentUrl)
-        whitelistedDomains.contains(domain) || whitelistedDomains.contains(domain.removePrefix("www."))
+        whitelistedDomains.any { UrlUtils.isSameOrSubdomain(domain, it) }
     }
 
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val dismissAddressBar: () -> Unit = {
+        if (isAddressBarEditing) {
+            isAddressBarEditing = false
+            focusManager.clearFocus(force = true)
+        }
+    }
+
+    LaunchedEffect(activeSheet) {
+        if (activeSheet != ActiveSheet.NONE) {
+            dismissAddressBar()
+        }
+    }
+
     val systemInDark = isSystemInDarkTheme()
     val isDarkTheme = when (themeMode) {
         AppThemeMode.LIGHT -> false
@@ -94,12 +117,18 @@ fun BrowserScreen(
     Box(modifier = modifier.fillMaxSize()) {
         // Hardware back press handling for main browser
         BackHandler(enabled = activeSheet == ActiveSheet.NONE) {
-            if (isFindInPageActive) {
+            if (isAddressBarEditing) {
+                dismissAddressBar()
+            } else if (isFindInPageActive) {
                 viewModel.closeFindInPage()
             } else if (activeTabState?.canGoBack == true) {
                 viewModel.goBack()
             } else if (!isHome) {
                 viewModel.goHome()
+            } else {
+                // An empty/new-tab browser should still obey Android back
+                // instead of consuming the gesture with no visible effect.
+                (context as? android.app.Activity)?.finish()
             }
         }
 
@@ -152,6 +181,8 @@ fun BrowserScreen(
                                         isPrivateMode = isPrivateMode,
                                         tabCount = currentTabs.size,
                                         isBookmarked = isBookmarked,
+                                        searchEngine = searchEngine,
+                                        isEditingExternally = isAddressBarEditing,
                                         isBottomPosition = false,
                                         onOpenReaderMode = { viewModel.openReaderMode() },
                                         onEditingChanged = { isAddressBarEditing = it },
@@ -162,11 +193,11 @@ fun BrowserScreen(
                                         onReload = { viewModel.reload() },
                                         onStop = { viewModel.stopLoading() },
                                         onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
-                                        onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                                        onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                                        onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
-                                        onOpenMenu = { showMenuSheet = true },
-                                        onGoHome = { viewModel.goHome() }
+                                        onOpenTabs = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.TABS) },
+                                        onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
+                                        onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                                        onOpenMenu = { dismissAddressBar(); showMenuSheet = true },
+                                        onGoHome = { dismissAddressBar(); viewModel.goHome() }
                                     )
                                 }
                             }
@@ -224,13 +255,15 @@ fun BrowserScreen(
                             canGoBack = activeTabState?.canGoBack == true,
                             canGoForward = activeTabState?.canGoForward == true,
                             isBookmarked = isBookmarked,
+                            searchEngine = searchEngine,
+                            isEditingExternally = isAddressBarEditing,
                             onGoBack = { viewModel.goBack() },
                             onGoForward = { viewModel.goForward() },
-                            onGoHome = { viewModel.goHome() },
-                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                            onOpenMenu = { showMenuSheet = true },
-                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
-                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onGoHome = { dismissAddressBar(); viewModel.goHome() },
+                            onOpenTabs = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.TABS) },
+                            onOpenMenu = { dismissAddressBar(); showMenuSheet = true },
+                            onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                            onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
                             onNavigate = {
                                 focusManager.clearFocus(force = true)
                                 viewModel.navigateTo(it)
@@ -250,12 +283,12 @@ fun BrowserScreen(
                             currentProfile = currentProfile,
                             onGoBack = { viewModel.goBack() },
                             onGoForward = { viewModel.goForward() },
-                            onGoHome = { viewModel.goHome() },
-                            onOpenTabs = { viewModel.openSheet(ActiveSheet.TABS) },
-                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onGoHome = { dismissAddressBar(); viewModel.goHome() },
+                            onOpenTabs = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.TABS) },
+                            onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
                             onNextProfile = { viewModel.switchToNextProfile() },
                             onPrevProfile = { viewModel.switchToPrevProfile() },
-                            onOpenMenu = { showMenuSheet = true }
+                            onOpenMenu = { dismissAddressBar(); showMenuSheet = true }
                         )
                     }
                 }
@@ -270,7 +303,14 @@ fun BrowserScreen(
             val activeTabIsDesktop = activeTabState?.isDesktopMode
             val activeTabIsPrivate = activeTabState?.isPrivate
 
-            val openTabs = remember(currentTabs, activeTabId, activeTabUrl) {
+            val openTabs = remember(
+                currentTabs,
+                activeTabId,
+                activeTabUrl,
+                activeTabTitle,
+                activeTabIsDesktop,
+                activeTabIsPrivate
+            ) {
                 val map = linkedMapOf<String, BrowserTab>()
                 currentTabs.forEach { tab ->
                     if (tab.id == activeTabId && activeTabUrl != null) {
@@ -385,8 +425,8 @@ fun BrowserScreen(
                             onAddShortcut = { title, url -> viewModel.addQuickShortcut(title, url) },
                             onEditShortcut = { id, title, url -> viewModel.editQuickShortcut(id, title, url) },
                             onRemoveShortcut = { id -> viewModel.removeQuickShortcut(id) },
-                            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
-                            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+                            onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
+                            onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
                             onOpenBookmarks = { viewModel.openSheet(ActiveSheet.BOOKMARKS) },
                             onOpenHistory = { viewModel.openSheet(ActiveSheet.HISTORY) },
                             onOpenDownloads = { viewModel.openSheet(ActiveSheet.DOWNLOADS) }
@@ -643,7 +683,7 @@ fun BrowserScreen(
             hasActiveUrl = !isHome,
             onNewTab = { viewModel.createNewTab() },
             onNewPrivateTab = { viewModel.togglePrivateMode() },
-            onOpenProfiles = { viewModel.openSheet(ActiveSheet.PROFILES) },
+            onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
             onOpenReaderMode = { viewModel.openReaderMode() },
             onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
             onOpenBookmarks = { viewModel.openSheet(ActiveSheet.BOOKMARKS) },
@@ -651,7 +691,7 @@ fun BrowserScreen(
             onOpenDownloads = { viewModel.openSheet(ActiveSheet.DOWNLOADS) },
             onStartFindInPage = { viewModel.startFindInPage() },
             onToggleDesktopMode = { viewModel.toggleDesktopMode() },
-            onOpenPrivacyShield = { viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
+            onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
             onOpenClearData = { showClearDataDialog = true },
             onOpenSettings = { viewModel.openSheet(ActiveSheet.SETTINGS) },
             onExitBrowser = {

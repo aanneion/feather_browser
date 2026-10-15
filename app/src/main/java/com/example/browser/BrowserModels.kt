@@ -108,8 +108,8 @@ data class ActiveTabState(
 )
 
 object UrlUtils {
-    private val URL_REGEX = Regex("^(https?://)?[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/.*)?$")
-    private val IP_REGEX = Regex("^(https?://)?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9]+)?(/.*)?$")
+    private val URL_REGEX = Regex("^(https?://)?[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?([/?#].*)?$")
+    private val IP_REGEX = Regex("^(https?://)?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9]+)?([/?#].*)?$")
 
     fun parseInputToUrl(input: String, searchEngine: SearchEngine = SearchEngine.GOOGLE): String {
         val trimmed = input.trim()
@@ -148,6 +148,14 @@ object UrlUtils {
 
     fun isHttps(url: String): Boolean {
         return url.startsWith("https://", ignoreCase = true)
+    }
+
+    /** Matches a site exception against the site itself and its subdomains. */
+    fun isSameOrSubdomain(host: String, domain: String): Boolean {
+        val normalizedHost = host.trim().lowercase().removePrefix("www.")
+        val normalizedDomain = domain.trim().lowercase().removePrefix("www.")
+        if (normalizedHost.isBlank() || normalizedDomain.isBlank()) return false
+        return normalizedHost == normalizedDomain || normalizedHost.endsWith(".$normalizedDomain")
     }
 
     /** Returns null when an HTTP navigation is disallowed by the selected policy. */

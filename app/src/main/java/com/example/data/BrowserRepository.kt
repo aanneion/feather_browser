@@ -1,12 +1,28 @@
 package com.example.data
 
+import android.app.DownloadManager
+import android.content.ContentUris
 import android.content.Context
+import android.net.Uri
 import com.example.data.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
-class BrowserRepository(private val database: AppDatabase) {
+class BrowserRepository(
+    private val database: AppDatabase,
+    private val context: Context? = null
+) {
+    private val preferences = context?.let(::BrowserPreferences)
+
+    private fun removeOwnedDownloadFile(item: DownloadItem) {
+        val uri = item.fileUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return
+        if (uri.scheme != "content") return
+        val downloadId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return
+        val manager = context?.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+        runCatching { manager.remove(downloadId) }
+    }
 
     val profiles: Flow<List<BrowserProfile>> = database.profileDao().getAllProfiles()
 
@@ -65,7 +81,17 @@ class BrowserRepository(private val database: AppDatabase) {
     }
 
     suspend fun initializeDefaultShortcutsIfNeeded(profileId: String) = withContext(Dispatchers.IO) {
-        // Pre-populate standard useful quick shortcuts if empty
+        // This runs during every app start. Only seed an actually empty profile;
+        // replacing the rows on each launch used to undo shortcut edits. Keep a
+        // marker as well so intentionally deleting every shortcut remains a
+        // user choice instead of triggering the defaults again next launch.
+        if (preferences?.wereDefaultShortcutsSeeded(profileId) == true) {
+            return@withContext
+        }
+        if (database.shortcutDao().getShortcutsForProfile(profileId).first().isNotEmpty()) {
+            preferences?.markDefaultShortcutsSeeded(profileId)
+            return@withContext
+        }
         val shortcuts = listOf(
             CustomShortcut("sc_google", profileId, "Google", "https://www.google.com", position = 0),
             CustomShortcut("sc_youtube", profileId, "YouTube", "https://www.youtube.com", position = 1),
@@ -76,6 +102,7 @@ class BrowserRepository(private val database: AppDatabase) {
         for (sc in shortcuts) {
             database.shortcutDao().insertShortcut(sc)
         }
+        preferences?.markDefaultShortcutsSeeded(profileId)
     }
 
     suspend fun initializeDefaultProfilesIfNeeded() = withContext(Dispatchers.IO) {
@@ -97,6 +124,9 @@ class BrowserRepository(private val database: AppDatabase) {
             database.tabDao().deleteTabsForProfile(legacyId)
             database.bookmarkDao().deleteBookmarksForProfile(legacyId)
             database.historyDao().deleteHistoryForProfile(legacyId)
+            deleteDownloadsForProfileInternal(legacyId)
+            database.shortcutDao().deleteShortcutsForProfile(legacyId)
+            database.dismissedShortcutDao().clearDismissedShortcutsForProfile(legacyId)
             database.profileDao().deleteProfileById(legacyId)
         }
     }
@@ -125,10 +155,22 @@ class BrowserRepository(private val database: AppDatabase) {
         database.profileDao().updateProfile(profile)
     }
 
+    private suspend fun deleteDownloadsForProfileInternal(profileId: String) {
+        database.downloadDao().getDownloadsForProfileOnce(profileId).forEach(::removeOwnedDownloadFile)
+        database.downloadDao().deleteDownloadsForProfile(profileId)
+    }
+
+    suspend fun deleteDownloadsForProfile(profileId: String) = withContext(Dispatchers.IO) {
+        deleteDownloadsForProfileInternal(profileId)
+    }
+
     suspend fun deleteProfile(profileId: String) = withContext(Dispatchers.IO) {
         database.tabDao().deleteTabsForProfile(profileId)
         database.bookmarkDao().deleteBookmarksForProfile(profileId)
         database.historyDao().deleteHistoryForProfile(profileId)
+        deleteDownloadsForProfileInternal(profileId)
+        database.shortcutDao().deleteShortcutsForProfile(profileId)
+        database.dismissedShortcutDao().clearDismissedShortcutsForProfile(profileId)
         database.profileDao().deleteProfileById(profileId)
     }
 
@@ -217,13 +259,22 @@ class BrowserRepository(private val database: AppDatabase) {
     }
 
     // Downloads
-    suspend fun recordDownload(profileId: String, url: String, filename: String, mimeType: String, sizeBytes: Long = 0, uri: String? = null) = withContext(Dispatchers.IO) {
+    suspend fun recordDownload(
+        profileId: String,
+        url: String,
+        filename: String,
+        mimeType: String,
+        sizeBytes: Long = 0,
+        uri: String? = null,
+        status: String = "COMPLETED"
+    ) = withContext(Dispatchers.IO) {
         database.downloadDao().insertDownload(
             DownloadItem(
                 profileId = profileId,
                 url = url,
                 filename = filename,
                 mimeType = mimeType,
+                status = status,
                 fileSizeBytes = sizeBytes,
                 fileUri = uri
             )
@@ -231,7 +282,17 @@ class BrowserRepository(private val database: AppDatabase) {
     }
 
     suspend fun deleteDownloadItem(id: Long) = withContext(Dispatchers.IO) {
+        database.downloadDao().getDownloadById(id)?.let(::removeOwnedDownloadFile)
         database.downloadDao().deleteDownloadById(id)
+    }
+
+    suspend fun updateDownloadState(
+        id: Long,
+        status: String,
+        fileUri: String?,
+        fileSizeBytes: Long = 0
+    ) = withContext(Dispatchers.IO) {
+        database.downloadDao().updateDownloadState(id, status, fileUri, fileSizeBytes)
     }
 
     // Privacy Exceptions

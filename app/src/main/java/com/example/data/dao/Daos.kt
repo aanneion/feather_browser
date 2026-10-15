@@ -126,11 +126,26 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE profileId = :profileId ORDER BY createdAt DESC")
     fun getDownloadsForProfile(profileId: String): Flow<List<DownloadItem>>
 
+    @Query("SELECT * FROM downloads WHERE profileId = :profileId")
+    suspend fun getDownloadsForProfileOnce(profileId: String): List<DownloadItem>
+
+    @Query("SELECT * FROM downloads")
+    suspend fun getAllDownloads(): List<DownloadItem>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertDownload(item: DownloadItem)
 
+    @Query("SELECT * FROM downloads WHERE id = :id LIMIT 1")
+    suspend fun getDownloadById(id: Long): DownloadItem?
+
+    @Query("UPDATE downloads SET status = :status, fileUri = :fileUri, fileSizeBytes = :fileSizeBytes WHERE id = :id")
+    suspend fun updateDownloadState(id: Long, status: String, fileUri: String?, fileSizeBytes: Long)
+
     @Query("DELETE FROM downloads WHERE id = :id")
     suspend fun deleteDownloadById(id: Long)
+
+    @Query("DELETE FROM downloads WHERE profileId = :profileId")
+    suspend fun deleteDownloadsForProfile(profileId: String)
 
     @Query("DELETE FROM downloads")
     suspend fun deleteAllDownloads()

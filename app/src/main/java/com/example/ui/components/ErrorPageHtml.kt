@@ -28,6 +28,9 @@ object ErrorPageHtml {
         val textSecondary = if (isDarkTheme) "#94A3B8" else "#64748B"
         val accentColor = "#3B82F6"
         val borderColor = if (isDarkTheme) "rgba(255, 255, 255, 0.08)" else "rgba(0, 0, 0, 0.08)"
+        val safeDomain = escapeHtml(domain)
+        val safeDescription = escapeHtml(description.ifBlank { "ERR_CONNECTION_FAILED" })
+        val safeRetryUrl = escapeHtml(escapeJavaScriptString(failingUrl))
 
         val humanTitle = when {
             errorCode == -2 || description.contains("ERR_NAME_NOT_RESOLVED", ignoreCase = true) || description.contains("NAME_NOT_RESOLVED", ignoreCase = true) -> "This site can’t be reached"
@@ -38,11 +41,11 @@ object ErrorPageHtml {
         }
 
         val humanExplanation = when {
-            errorCode == -2 || description.contains("ERR_NAME_NOT_RESOLVED", ignoreCase = true) -> "Check if <strong>$domain</strong> is spelled correctly, or search for it using your search engine."
-            errorCode == -6 -> "The server at <strong>$domain</strong> refused the connection or is currently offline."
+            errorCode == -2 || description.contains("ERR_NAME_NOT_RESOLVED", ignoreCase = true) -> "Check if <strong>$safeDomain</strong> is spelled correctly, or search for it using your search engine."
+            errorCode == -6 -> "The server at <strong>$safeDomain</strong> refused the connection or is currently offline."
             errorCode == -8 -> "The server took too long to respond. Your connection might be slow or interrupted."
-            errorCode == -11 -> "The security certificate presented by <strong>$domain</strong> could not be verified."
-            else -> "An error occurred while attempting to load <strong>$domain</strong> ($description)."
+            errorCode == -11 -> "The security certificate presented by <strong>$safeDomain</strong> could not be verified."
+            else -> "An error occurred while attempting to load <strong>$safeDomain</strong> (${escapeHtml(description)})."
         }
 
         val encodedSearchQuery = try {
@@ -51,6 +54,7 @@ object ErrorPageHtml {
             domain
         }
         val searchLink = if (searchQueryUrl.isNotBlank()) searchQueryUrl + encodedSearchQuery else "https://www.google.com/search?q=$encodedSearchQuery"
+        val safeSearchLink = escapeHtml(searchLink)
 
         return """
         <!DOCTYPE html>
@@ -58,7 +62,7 @@ object ErrorPageHtml {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-            <title>$humanTitle</title>
+            <title>${escapeHtml(humanTitle)}</title>
             <style>
                 * {
                     box-sizing: border-box;
@@ -172,13 +176,13 @@ object ErrorPageHtml {
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
                     </svg>
                 </div>
-                <h1>$humanTitle</h1>
+                <h1>${escapeHtml(humanTitle)}</h1>
                 <p class="explanation">$humanExplanation</p>
-                <div class="error-code">ERROR: ${description.ifBlank { "ERR_CONNECTION_FAILED" }}</div>
+                <div class="error-code">ERROR: $safeDescription</div>
 
                 <div class="actions">
-                    <button class="btn btn-primary" onclick="location.reload();">Try Again</button>
-                    <a class="btn btn-search" href="$searchLink">Search for this address</a>
+                    <button class="btn btn-primary" onclick="window.location.href='${safeRetryUrl}';">Try Again</button>
+                    <a class="btn btn-search" href="$safeSearchLink">Search for this address</a>
                     <button class="btn btn-secondary" onclick="location.href='about:blank';">Go to Home Page</button>
                 </div>
             </div>
@@ -186,4 +190,19 @@ object ErrorPageHtml {
         </html>
         """.trimIndent()
     }
+
+    private fun escapeHtml(value: String): String = value
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
+
+    private fun escapeJavaScriptString(value: String): String = value
+        .replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace("\"", "\\\"")
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+        .replace("</", "<\\/")
 }

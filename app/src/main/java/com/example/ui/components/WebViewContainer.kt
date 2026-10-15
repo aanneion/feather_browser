@@ -482,6 +482,21 @@ fun WebViewContainer(
         }
     }
 
+    // A tab can keep its WebView alive while it is hidden. Re-sync navigation
+    // controls when it becomes visible again instead of waiting for a new page
+    // callback that may never arrive.
+    LaunchedEffect(tabId, isActive, webViewRef) {
+        val webView = webViewRef ?: return@LaunchedEffect
+        if (!isActive) return@LaunchedEffect
+        viewModel.onNavigationStateChanged(
+            tabId = tabId,
+            canGoBack = webView.canGoBack(),
+            canGoForward = webView.canGoForward()
+        )
+        webView.url?.takeIf { it.isNotBlank() }?.let { viewModel.onUrlChanged(tabId, it) }
+        webView.title?.takeIf { it.isNotBlank() }?.let { viewModel.onTitleChanged(tabId, it) }
+    }
+
     // Clean up WebView memory, media players, and textures when tab is closed
     LaunchedEffect(effectiveDark) {
         val webView = webViewRef ?: return@LaunchedEffect
@@ -626,7 +641,7 @@ fun WebViewContainer(
                             displayZoomControls = false
                             allowFileAccess = false
                             allowContentAccess = false
-                            setSupportMultipleWindows(false)
+                            setSupportMultipleWindows(true)
                             mediaPlaybackRequiresUserGesture = false
                             cacheMode = WebSettings.LOAD_DEFAULT
 
@@ -694,7 +709,9 @@ fun WebViewContainer(
                             ): WebResourceResponse? {
                                 val uri = request?.url ?: return null
                                 val host = uri.host ?: ""
-                                val isWhitelisted = whitelistedDomains.contains(host) || whitelistedDomains.contains(host.removePrefix("www."))
+                                val isWhitelisted = whitelistedDomains.any {
+                                    com.example.browser.UrlUtils.isSameOrSubdomain(host, it)
+                                }
 
                                 if (ContentBlocker.shouldBlock(uri, isAdBlockEnabled, isWhitelisted)) {
                                     ContentBlocker.recordBlockForTab(tabId)
@@ -788,6 +805,17 @@ fun WebViewContainer(
                                         "ERR_CONNECTION_FAILED"
                                     }
 
+                                    val fallbackUrl = viewModel.getHttpsFallbackUrl(
+                                        tabId = tabId,
+                                        failingUrl = failingUrl,
+                                        errorCode = errCode,
+                                        description = description
+                                    )
+                                    if (!fallbackUrl.isNullOrBlank()) {
+                                        view?.loadUrl(fallbackUrl)
+                                        return
+                                    }
+
                                     val customHtml = ErrorPageHtml.buildErrorPage(
                                         failingUrl = failingUrl,
                                         errorCode = errCode,
@@ -803,7 +831,7 @@ fun WebViewContainer(
                                         "UTF-8",
                                         null
                                     )
-                                    viewModel.onPageLoadError(tabId)
+                                    viewModel.onPageLoadError(tabId, failingUrl)
                                 }
                             }
 
@@ -871,6 +899,21 @@ fun WebViewContainer(
                             }
 
                             private fun handleUrlOverride(view: WebView?, url: String): Boolean {
+                                // Route HTTP links through the ViewModel so Prefer HTTPS can
+                                // retry the original address when the upgrade is unavailable.
+                                if (url.startsWith("http://", ignoreCase = true) && currentHttpsMode != HttpsMode.NORMAL) {
+                                    if (viewModel.activeTabId.value == tabId) {
+                                        viewModel.navigateTo(url)
+                                    } else {
+                                        val upgradedUrl = com.example.browser.UrlUtils.applyHttpsMode(url, currentHttpsMode)
+                                        if (upgradedUrl == null) {
+                                            android.widget.Toast.makeText(context, "HTTPS-only mode blocked this insecure link", android.widget.Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            view?.loadUrl(upgradedUrl)
+                                        }
+                                    }
+                                    return true
+                                }
                                 val secureUrl = com.example.browser.UrlUtils.applyHttpsMode(url, currentHttpsMode)
                                 if (secureUrl == null) {
                                     android.widget.Toast.makeText(context, "HTTPS-only mode blocked this insecure link", android.widget.Toast.LENGTH_SHORT).show()
@@ -925,6 +968,52 @@ fun WebViewContainer(
 
                         // Custom WebChromeClient
                         webChromeClient = object : WebChromeClient() {
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: Message?
+                            ): Boolean {
+                                // User-initiated target=_blank links should become real
+                                // Feather tabs. Reject script-only popups so ad scripts
+                                // cannot fill the tab switcher.
+                                if (!isUserGesture || resultMsg == null) return false
+                                val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                                val popup = WebView(ctx)
+                                popup.settings.javaScriptEnabled = true
+                                popup.settings.domStorageEnabled = true
+                                view?.settings?.userAgentString?.let { popup.settings.userAgentString = it }
+                                var opened = false
+
+                                fun routePopupUrl(url: String) {
+                                    if (opened || url.isBlank() || url == "about:blank") return
+                                    if (!url.startsWith("http://", ignoreCase = true) &&
+                                        !url.startsWith("https://", ignoreCase = true)
+                                    ) return
+                                    opened = true
+                                    viewModel.openLinkInNewTab(url, openInBackground = false)
+                                    try {
+                                        popup.stopLoading()
+                                        popup.destroy()
+                                    } catch (_: Throwable) { }
+                                }
+
+                                popup.webViewClient = object : WebViewClient() {
+                                    override fun onPageStarted(v: WebView?, url: String?, favicon: Bitmap?) {
+                                        super.onPageStarted(v, url, favicon)
+                                        url?.let(::routePopupUrl)
+                                    }
+
+                                    override fun shouldOverrideUrlLoading(v: WebView?, url: String?): Boolean {
+                                        url?.let(::routePopupUrl)
+                                        return true
+                                    }
+                                }
+                                transport.webView = popup
+                                resultMsg.sendToTarget()
+                                return true
+                            }
+
                             override fun onJsBeforeUnload(
                                 view: WebView?,
                                 url: String?,

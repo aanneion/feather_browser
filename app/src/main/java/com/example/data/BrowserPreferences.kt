@@ -29,6 +29,7 @@ class BrowserPreferences(context: Context) {
         private const val KEY_TOTAL_BLOCKED_COUNT = "pref_total_blocked_count"
         private const val KEY_TOTAL_TRACKERS_BLOCKED = "pref_total_trackers_blocked"
         private const val KEY_TOTAL_ADS_BLOCKED = "pref_total_ads_blocked"
+        private const val KEY_INITIALIZED_SHORTCUT_PROFILES = "pref_initialized_shortcut_profiles"
     }
 
     fun getTotalBlockedCount(): Long {
@@ -74,6 +75,17 @@ class BrowserPreferences(context: Context) {
 
     fun setToolbarPosition(pos: com.example.browser.ToolbarPosition) {
         prefs.edit().putString(KEY_TOOLBAR_POSITION, pos.name).apply()
+    }
+
+    fun wereDefaultShortcutsSeeded(profileId: String): Boolean =
+        prefs.getStringSet(KEY_INITIALIZED_SHORTCUT_PROFILES, emptySet())?.contains(profileId) == true
+
+    fun markDefaultShortcutsSeeded(profileId: String) {
+        val seeded = prefs.getStringSet(KEY_INITIALIZED_SHORTCUT_PROFILES, emptySet())
+            ?.toMutableSet()
+            ?: mutableSetOf()
+        seeded += profileId
+        prefs.edit().putStringSet(KEY_INITIALIZED_SHORTCUT_PROFILES, seeded).apply()
     }
 
     fun isWeatherOnNewTab(): Boolean {
