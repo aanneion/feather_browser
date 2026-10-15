@@ -1301,8 +1301,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val downloadId = downloadManager.enqueue(request)
+            // DownloadManager does not expose its base content URI in the public SDK.
+            // Its per-app download records use content://downloads/my_downloads/<id>.
             val downloadUri = ContentUris.withAppendedId(
-                DownloadManager.EXTERNAL_CONTENT_URI,
+                Uri.parse("content://downloads/my_downloads"),
                 downloadId
             )
 
