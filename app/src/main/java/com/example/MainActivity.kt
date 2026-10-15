@@ -25,6 +25,7 @@ import com.example.ui.theme.MyApplicationTheme
 class MainActivity : ComponentActivity() {
 
     private val viewModel: BrowserViewModel by viewModels()
+    private var notificationPermissionRequested = false
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -37,13 +38,21 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         enableHighRefreshRate()
 
-        requestNotificationPermissionIfNeeded()
         handleIntent(intent)
 
         setContent {
             val themeMode by viewModel.themeMode.collectAsStateWithLifecycle()
             val useMaterialYou by viewModel.useMaterialYou.collectAsStateWithLifecycle()
             val isPrivateMode by viewModel.isPrivateMode.collectAsStateWithLifecycle()
+            val playbackState by MediaSessionManager.playbackState.collectAsStateWithLifecycle()
+
+            LaunchedEffect(playbackState) {
+                if (playbackState == com.example.media.BrowserPlaybackState.PLAYING ||
+                    playbackState == com.example.media.BrowserPlaybackState.BUFFERING
+                ) {
+                    requestNotificationPermissionIfNeeded()
+                }
+            }
 
             MyApplicationTheme(
                 themeMode = themeMode,
@@ -58,16 +67,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        requestNotificationPermissionIfNeeded()
-    }
-
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !notificationPermissionRequested &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionRequested = true
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 

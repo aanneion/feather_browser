@@ -178,9 +178,17 @@ fun DownloadsScreen(
                                         )
                                     }
                                     Text(
-                                        text = timeFormatter.format(Date(item.createdAt)),
+                                        text = when (item.status) {
+                                            "DOWNLOADING" -> "Downloading…"
+                                            "FAILED" -> "Download failed"
+                                            else -> timeFormatter.format(Date(item.createdAt))
+                                        },
                                         fontSize = 11.5.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = if (item.status == "FAILED") {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
                                     )
                                 }
                             }

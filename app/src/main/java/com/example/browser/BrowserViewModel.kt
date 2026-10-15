@@ -2,6 +2,7 @@ package com.example.browser
 
 import android.app.Application
 import android.app.DownloadManager
+import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -21,6 +22,7 @@ import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
 import com.example.weather.WeatherRepository
 import com.example.weather.WeatherUiState
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -31,7 +33,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private val context: Context get() = getApplication()
     private val database = AppDatabase.getDatabase(context)
-    val repository = BrowserRepository(database)
+    val repository = BrowserRepository(database, context)
     val privacyManager = PrivacyManager(context, database)
 
     // Current Active Profile
@@ -71,6 +73,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // Active Tab Runtime State (url, title, progress, etc.)
     private val _activeTabState = MutableStateFlow<ActiveTabState?>(null)
     val activeTabState: StateFlow<ActiveTabState?> = _activeTabState.asStateFlow()
+
+    // WebView callbacks can arrive while a tab is not selected. Keep the latest
+    // navigation affordances so switching tabs does not temporarily disable Back
+    // and Forward until the page happens to emit another callback.
+    private val navigationStates = java.util.concurrent.ConcurrentHashMap<String, Pair<Boolean, Boolean>>()
+
+    // A title can be reported several times for one navigation (especially on SPAs).
+    // Guard history writes by tab + URL so History remains useful instead of filling
+    // with duplicate entries.
+    private val recordedHistoryUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    // Used by Prefer HTTPS to retry the original HTTP address when HTTPS is not
+    // available. This is intentionally per-tab so one failed navigation cannot
+    // affect another tab.
+    private val httpsFallbackUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val failedMainFrameUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     // Navigation / Action Events for WebView (buffered to prevent dropped navigation events)
     private val _webViewActionEvent = MutableSharedFlow<WebViewAction>(
@@ -163,24 +181,42 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         openInBackground: Boolean = false,
         isPrivate: Boolean = _isPrivateMode.value
     ) {
+        val secureUrl = UrlUtils.applyHttpsMode(url, httpsMode.value)
+        if (secureUrl == null) {
+            Toast.makeText(context, "HTTPS-only mode blocked this insecure link", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (secureUrl.isBlank()) return
+
         viewModelScope.launch {
             val tabId = UUID.randomUUID().toString()
             val targetProfileId = if (isPrivate) "private_session" else _currentProfileId.value
             val newTab = BrowserTab(
                 id = tabId,
                 profileId = targetProfileId,
-                url = url,
-                title = url,
+                url = secureUrl,
+                title = secureUrl,
                 isPrivate = isPrivate
             )
             repository.saveTab(newTab)
+            if (httpsMode.value == HttpsMode.PREFER_HTTPS &&
+                url.startsWith("http://", ignoreCase = true) &&
+                secureUrl != url
+            ) {
+                httpsFallbackUrls[tabId] = url
+            }
             if (!openInBackground) {
                 if (isPrivate && !_isPrivateMode.value) {
                     _isPrivateMode.value = true
                 } else if (!isPrivate && _isPrivateMode.value) {
                     _isPrivateMode.value = false
                 }
-                selectTab(tabId, autoDismiss = true)
+                // The tab Flow may not have emitted the just-inserted tab yet. Activate
+                // it directly so opening a link never shows a blank tab first.
+                activateTab(
+                    tab = newTab,
+                    autoDismiss = true
+                )
             }
         }
     }
@@ -429,6 +465,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         ContentBlocker.initialize(preferences)
 
         viewModelScope.launch {
+            // Private tab metadata is session-only. Do not resurrect old private
+            // tabs after the process has been recreated.
+            repository.clearPrivateTabs()
             repository.initializeDefaultProfilesIfNeeded()
             repository.initializeDefaultShortcutsIfNeeded("default_personal")
             loadTabsForProfile(_currentProfileId.value)
@@ -457,16 +496,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                         } else {
                             val curState = _activeTabState.value
                             if (curState == null || curState.id != existingTab.id) {
-                                val currentBlocked = ContentBlocker.getBlockCountForTab(existingTab.id)
-                                _activeTabState.value = ActiveTabState(
-                                    id = existingTab.id,
-                                    profileId = existingTab.profileId,
-                                    url = existingTab.url,
-                                    title = existingTab.title,
-                                    isPrivate = existingTab.isPrivate,
-                                    isDesktopMode = existingTab.isDesktopMode,
-                                    blockedCount = currentBlocked
-                                )
+                                activateTab(existingTab, autoDismiss = false)
                             }
                         }
                     }
@@ -564,6 +594,26 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private fun activateTab(tab: BrowserTab, autoDismiss: Boolean) {
+        setBarsVisible(true)
+        _activeTabId.value = tab.id
+        val navigation = navigationStates[tab.id]
+        _activeTabState.value = ActiveTabState(
+            id = tab.id,
+            profileId = tab.profileId,
+            url = tab.url,
+            title = tab.title.ifBlank { if (tab.url.isBlank()) "New Tab" else tab.url },
+            faviconUrl = tab.faviconUrl,
+            canGoBack = navigation?.first ?: false,
+            canGoForward = navigation?.second ?: false,
+            blockedCount = ContentBlocker.getBlockCountForTab(tab.id),
+            isSecure = tab.url.isBlank() || tab.url == "about:blank" || UrlUtils.isHttps(tab.url),
+            isPrivate = tab.isPrivate,
+            isDesktopMode = tab.isDesktopMode
+        )
+        if (autoDismiss) dismissSheet()
+    }
+
     fun createNewTab(
         url: String = "",
         profileId: String = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
@@ -580,40 +630,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 isPrivate = isPrivate
             )
             repository.saveTab(newTab)
-            setBarsVisible(true)
-            _activeTabId.value = tabId
-            _activeTabState.value = ActiveTabState(
-                id = tabId,
-                profileId = profileId,
-                url = url,
-                title = if (url.isBlank()) "New Tab" else url,
-                isPrivate = isPrivate,
-                isDesktopMode = false,
-                blockedCount = 0
-            )
-            if (autoDismiss) {
-                dismissSheet()
-            }
+            // Activate from the inserted value rather than waiting for Room's Flow
+            // emission; this keeps the new-tab action visually immediate.
+            activateTab(newTab, autoDismiss)
         }
     }
 
     fun selectTab(tabId: String, autoDismiss: Boolean = true) {
-        setBarsVisible(true)
-        _activeTabId.value = tabId
         val tab = currentTabs.value.find { it.id == tabId }
-        val currentBlocked = ContentBlocker.getBlockCountForTab(tabId)
-        _activeTabState.value = ActiveTabState(
-            id = tabId,
-            profileId = tab?.profileId ?: _currentProfileId.value,
-            url = tab?.url ?: "",
-            title = tab?.title ?: "New Tab",
-            isPrivate = tab?.isPrivate ?: _isPrivateMode.value,
-            isDesktopMode = tab?.isDesktopMode ?: false,
-            blockedCount = currentBlocked
-        )
-        if (autoDismiss) {
-            dismissSheet()
-        }
+            ?: BrowserTab(
+                id = tabId,
+                profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
+                url = "",
+                title = "New Tab",
+                isPrivate = _isPrivateMode.value
+            )
+        activateTab(tab, autoDismiss)
     }
 
     fun closeTab(tabId: String) {
@@ -621,6 +653,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val allTabs = currentTabs.value
             val closedIndex = allTabs.indexOfFirst { it.id == tabId }
             repository.deleteTab(tabId)
+            navigationStates.remove(tabId)
+            recordedHistoryUrls.remove(tabId)
+            httpsFallbackUrls.remove(tabId)
+            failedMainFrameUrls.remove(tabId)
             ContentBlocker.resetTabBlockCount(tabId)
             try {
                 if (com.example.media.MediaSessionManager.activeMediaTabId.value == tabId) {
@@ -648,6 +684,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Throwable) { }
             val profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value
             repository.clearTabsForProfile(profileId, _isPrivateMode.value)
+            navigationStates.clear()
+            recordedHistoryUrls.clear()
+            httpsFallbackUrls.clear()
+            failedMainFrameUrls.clear()
             if (_isPrivateMode.value) {
                 privacyManager.cleanPrivateSessionData()
             }
@@ -670,6 +710,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 tabId = UUID.randomUUID().toString()
                 _activeTabId.value = tabId
             }
+
+            // A new explicit navigation is a fresh visit even when its URL
+            // matches the previous page (for example after returning home).
+            recordedHistoryUrls.remove(tabId)
+            val originalHttpUrl = parsedUrl.takeIf {
+                httpsMode.value == HttpsMode.PREFER_HTTPS &&
+                    it.startsWith("http://", ignoreCase = true)
+            }
+            if (originalHttpUrl != null && originalHttpUrl != secureUrl) {
+                httpsFallbackUrls[tabId] = originalHttpUrl
+            } else {
+                httpsFallbackUrls.remove(tabId)
+            }
+            failedMainFrameUrls.remove(tabId)
+
             val curState = _activeTabState.value
             if (curState == null || curState.id != tabId) {
                 _activeTabState.value = ActiveTabState(
@@ -677,12 +732,29 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     profileId = if (_isPrivateMode.value) "private_session" else _currentProfileId.value,
                     url = secureUrl,
                     title = secureUrl,
+                    isSecure = UrlUtils.isHttps(secureUrl),
+                    blockedCount = 0,
                     isPrivate = _isPrivateMode.value,
                     isLoading = true,
-                    progress = 10
+                    progress = 10,
+                    canGoBack = false,
+                    canGoForward = false
                 )
             } else {
-                _activeTabState.update { it?.copy(url = secureUrl, progress = 10, isLoading = true) }
+                _activeTabState.update {
+                    it?.copy(
+                        url = secureUrl,
+                        title = secureUrl,
+                        isSecure = UrlUtils.isHttps(secureUrl),
+                        blockedCount = 0,
+                        progress = 10,
+                        isLoading = true,
+                        canGoBack = false,
+                        canGoForward = false,
+                        searchMatchCurrent = 0,
+                        searchMatchCount = 0
+                    )
+                }
             }
             viewModelScope.launch {
                 _webViewActionEvent.emit(WebViewAction.LoadUrl(secureUrl, targetTabId = tabId))
@@ -708,7 +780,15 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         setBarsVisible(true)
         val tabId = _activeTabId.value
         if (tabId.isNotBlank()) {
-            viewModelScope.launch { _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId)) }
+            viewModelScope.launch {
+                val failedUrl = failedMainFrameUrls[tabId]
+                if (!failedUrl.isNullOrBlank()) {
+                    failedMainFrameUrls.remove(tabId)
+                    _webViewActionEvent.emit(WebViewAction.LoadUrl(failedUrl, targetTabId = tabId))
+                } else {
+                    _webViewActionEvent.emit(WebViewAction.Reload(targetTabId = tabId))
+                }
+            }
         }
     }
 
@@ -738,6 +818,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun goHome() {
         setBarsVisible(true)
         val tabId = _activeTabId.value
+        recordedHistoryUrls.remove(tabId)
+        failedMainFrameUrls.remove(tabId)
+        httpsFallbackUrls.remove(tabId)
         _activeTabState.update { it?.copy(url = "", title = "New Tab", progress = 0, isLoading = false) }
         if (tabId.isNotBlank()) {
             viewModelScope.launch {
@@ -824,7 +907,14 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (tabId == _activeTabId.value) {
             setBarsVisible(true)
         }
+        failedMainFrameUrls.remove(tabId)
+        if (url == httpsFallbackUrls[tabId]) {
+            // We are now loading the explicit HTTP fallback; do not try HTTPS
+            // again if this request also fails.
+            httpsFallbackUrls.remove(tabId)
+        }
         if (url.isBlank() || url == "about:blank") {
+            recordedHistoryUrls.remove(tabId)
             if (tabId == _activeTabId.value) {
                 _activeTabState.update { it?.copy(isLoading = false, progress = 0) }
             }
@@ -834,6 +924,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (tabId == _activeTabId.value) {
             _activeTabState.update {
                 it?.copy(
+                    title = url,
                     isLoading = true,
                     progress = it.progress.coerceIn(15, 90)
                 )
@@ -842,6 +933,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onPageFinished(tabId: String, url: String) {
+        if (url.startsWith("https://", ignoreCase = true)) {
+            httpsFallbackUrls.remove(tabId)
+        }
         if (tabId == _activeTabId.value) {
             _activeTabState.update {
                 it?.copy(
@@ -852,7 +946,28 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun onPageLoadError(tabId: String) {
+    /**
+     * Prefer HTTPS is an upgrade attempt, not a hard HTTPS-only policy. If the
+     * upgraded request fails for a transport/TLS reason, retry the original HTTP
+     * address once. The caller performs the actual WebView load.
+     */
+    fun getHttpsFallbackUrl(
+        tabId: String,
+        failingUrl: String,
+        errorCode: Int,
+        description: String
+    ): String? {
+        if (!failingUrl.startsWith("https://", ignoreCase = true)) return null
+        val isRetryable = errorCode in setOf(-1, -6, -7, -8, -11) ||
+            description.contains("SSL", ignoreCase = true) ||
+            description.contains("CONNECTION", ignoreCase = true) ||
+            description.contains("TIMED_OUT", ignoreCase = true)
+        if (!isRetryable) return null
+        return httpsFallbackUrls.remove(tabId)
+    }
+
+    fun onPageLoadError(tabId: String, failingUrl: String? = null) {
+        failingUrl?.takeIf { it.isNotBlank() }?.let { failedMainFrameUrls[tabId] = it }
         if (tabId == _activeTabId.value) {
             _activeTabState.update {
                 it?.copy(
@@ -867,7 +982,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (url.isBlank() || url == "about:blank") return
         val isSec = UrlUtils.isHttps(url)
         val blocked = ContentBlocker.getBlockCountForTab(tabId)
-        
+
         if (tabId == _activeTabId.value) {
             val curState = _activeTabState.value
             if (curState?.url != url || curState.isSecure != isSec || curState.blockedCount != blocked) {
@@ -898,15 +1013,25 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 if (cur.title != title) {
                     repository.saveTab(cur.copy(title = title))
                 }
-                // Record history if not private
-                val url = if (tabId == _activeTabId.value) _activeTabState.value?.url ?: cur.url else cur.url
-                if (url.isNotBlank() && url != "about:blank") {
-                    repository.recordHistory(
-                        profileId = cur.profileId,
-                        title = title,
-                        url = url,
-                        isPrivate = cur.isPrivate
-                    )
+
+                // WebView may report the title more than once during a single
+                // navigation. Record one history visit for the URL, not one
+                // row for every title mutation.
+                val url = if (tabId == _activeTabId.value) {
+                    _activeTabState.value?.url ?: cur.url
+                } else {
+                    cur.url
+                }
+                if (url.isNotBlank() && url != "about:blank" && !cur.isPrivate) {
+                    val previousUrl = recordedHistoryUrls.put(tabId, url)
+                    if (previousUrl != url) {
+                        repository.recordHistory(
+                            profileId = cur.profileId,
+                            title = title,
+                            url = url,
+                            isPrivate = false
+                        )
+                    }
                 }
             }
         }
@@ -936,6 +1061,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun onNavigationStateChanged(tabId: String, canGoBack: Boolean, canGoForward: Boolean) {
+        navigationStates[tabId] = canGoBack to canGoForward
         if (tabId != _activeTabId.value) return
         val curState = _activeTabState.value ?: return
         if (curState.canGoBack == canGoBack && curState.canGoForward == canGoForward) {
@@ -960,7 +1086,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (url.isBlank() || url == "about:blank") return
 
         viewModelScope.launch {
-            val isBm = repository.isBookmarked(tab.profileId, url)
+            // A deliberate bookmark from a private tab is still useful in the
+            // normal bookmark collection. Never persist it under the ephemeral
+            // private_session profile where it would become inaccessible.
+            val bookmarkProfileId = if (tab.isPrivate) _currentProfileId.value else tab.profileId
+            val isBm = repository.isBookmarked(bookmarkProfileId, url)
             if (isBm) {
                 val currentBm = bookmarks.value.find { it.url == url }
                 if (currentBm != null) {
@@ -968,7 +1098,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     Toast.makeText(context, "Bookmark removed", Toast.LENGTH_SHORT).show()
                 }
             } else {
-                repository.addBookmark(tab.profileId, tab.title.ifBlank { url }, url)
+                repository.addBookmark(bookmarkProfileId, tab.title.ifBlank { url }, url)
                 Toast.makeText(context, "Bookmark added", Toast.LENGTH_SHORT).show()
             }
         }
@@ -1001,6 +1131,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun clearAllHistory() {
         viewModelScope.launch {
             repository.clearHistoryForProfile(_currentProfileId.value)
+            recordedHistoryUrls.clear()
             Toast.makeText(context, "History cleared", Toast.LENGTH_SHORT).show()
         }
     }
@@ -1011,11 +1142,119 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /** Synchronizes Feather's download history with Android DownloadManager. */
+    fun refreshDownloadStates() {
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+        val items = downloads.value.filter { it.fileUri?.startsWith("content:") == true }
+        if (items.isEmpty()) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            items.forEach { item ->
+                val downloadId = runCatching {
+                    ContentUris.parseId(Uri.parse(item.fileUri))
+                }.getOrNull() ?: return@forEach
+
+                var nextStatus: String? = null
+                var nextUri = item.fileUri
+                var nextSize = item.fileSizeBytes
+                manager.query(DownloadManager.Query().setFilterById(downloadId))?.use { cursor ->
+                    if (!cursor.moveToFirst()) {
+                        nextStatus = "FAILED"
+                    } else {
+                        val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                        val sizeIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                        when (cursor.getInt(statusIndex)) {
+                            DownloadManager.STATUS_SUCCESSFUL -> {
+                                val localUri = manager.getUriForDownloadedFile(downloadId)
+                                if (localUri == null) {
+                                    nextStatus = "FAILED"
+                                } else {
+                                    nextStatus = "COMPLETED"
+                                    nextUri = localUri.toString()
+                                    if (sizeIndex >= 0) {
+                                        nextSize = cursor.getLong(sizeIndex).coerceAtLeast(0L)
+                                    }
+                                }
+                            }
+                            DownloadManager.STATUS_FAILED -> nextStatus = "FAILED"
+                            DownloadManager.STATUS_PENDING,
+                            DownloadManager.STATUS_RUNNING,
+                            DownloadManager.STATUS_PAUSED -> nextStatus = "DOWNLOADING"
+                        }
+                    }
+                }
+
+                if (nextStatus != null &&
+                    (nextStatus != item.status || nextUri != item.fileUri || nextSize != item.fileSizeBytes)
+                ) {
+                    repository.updateDownloadState(
+                        id = item.id,
+                        status = nextStatus!!,
+                        fileUri = nextUri,
+                        fileSizeBytes = nextSize
+                    )
+                }
+            }
+        }
+    }
+
     fun openDownloadedFile(item: DownloadItem) {
         try {
-            val intent = Intent(Intent.ACTION_VIEW)
-            intent.setDataAndType(Uri.parse(item.fileUri ?: item.url), item.mimeType)
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            var resolvedUri: Uri? = null
+            val storedUri = item.fileUri?.let { runCatching { Uri.parse(it) }.getOrNull() }
+            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
+
+            // Built-in downloads are stored as a DownloadManager content URI.
+            // Resolve it before launching so tapping a download opens the local
+            // file instead of re-requesting the original web URL.
+            if (storedUri?.scheme == "content" && downloadManager != null) {
+                val downloadId = runCatching { ContentUris.parseId(storedUri) }.getOrNull()
+                if (downloadId != null) {
+                    downloadManager.query(DownloadManager.Query().setFilterById(downloadId))?.use { cursor ->
+                        if (!cursor.moveToFirst()) {
+                            viewModelScope.launch {
+                                repository.updateDownloadState(
+                                    id = item.id,
+                                    status = "FAILED",
+                                    fileUri = storedUri.toString(),
+                                    fileSizeBytes = item.fileSizeBytes
+                                )
+                            }
+                            Toast.makeText(context, "This download is no longer available", Toast.LENGTH_SHORT).show()
+                            return
+                        }
+                        val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                        when (cursor.getInt(statusIndex)) {
+                            DownloadManager.STATUS_PENDING,
+                            DownloadManager.STATUS_RUNNING,
+                            DownloadManager.STATUS_PAUSED -> {
+                                Toast.makeText(context, "Download is still in progress", Toast.LENGTH_SHORT).show()
+                                return
+                            }
+                            DownloadManager.STATUS_FAILED -> {
+                                Toast.makeText(context, "This download failed", Toast.LENGTH_SHORT).show()
+                                return
+                            }
+                            DownloadManager.STATUS_SUCCESSFUL -> {
+                                resolvedUri = downloadManager.getUriForDownloadedFile(downloadId) ?: storedUri
+                                viewModelScope.launch {
+                                    repository.updateDownloadState(
+                                        id = item.id,
+                                        status = "COMPLETED",
+                                        fileUri = resolvedUri?.toString() ?: storedUri.toString()
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            val targetUri = resolvedUri ?: storedUri ?: Uri.parse(item.url)
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(targetUri, item.mimeType.ifBlank { "application/octet-stream" })
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
             context.startActivity(intent)
         } catch (e: Exception) {
             Toast.makeText(context, "Cannot open file: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -1040,15 +1279,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(chooser)
-                viewModelScope.launch {
-                    repository.recordDownload(
-                        profileId = _currentProfileId.value,
-                        url = url,
-                        filename = filename,
-                        mimeType = mimetype,
-                        sizeBytes = contentLength
-                    )
-                }
+                // The external app owns the file and its lifecycle. Do not add a
+                // misleading local record that Feather cannot open or track.
                 Toast.makeText(context, "Opening downloader for $filename...", Toast.LENGTH_SHORT).show()
                 return
             } catch (e: Exception) {
@@ -1057,8 +1289,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
 
         try {
+            val resolvedMimeType = mimetype.ifBlank { "application/octet-stream" }
             val request = DownloadManager.Request(Uri.parse(url)).apply {
-                setMimeType(mimetype)
+                setMimeType(resolvedMimeType)
                 addRequestHeader("User-Agent", userAgent)
                 CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
                 setDescription("Downloading $filename")
@@ -1067,15 +1300,21 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
             }
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            downloadManager.enqueue(request)
+            val downloadId = downloadManager.enqueue(request)
+            val downloadUri = ContentUris.withAppendedId(
+                DownloadManager.EXTERNAL_CONTENT_URI,
+                downloadId
+            )
 
             viewModelScope.launch {
                 repository.recordDownload(
                     profileId = _currentProfileId.value,
                     url = url,
                     filename = filename,
-                    mimeType = mimetype,
-                    sizeBytes = contentLength
+                    mimeType = resolvedMimeType,
+                    sizeBytes = contentLength,
+                    uri = downloadUri.toString(),
+                    status = "DOWNLOADING"
                 )
             }
             Toast.makeText(context, "Downloading $filename...", Toast.LENGTH_SHORT).show()

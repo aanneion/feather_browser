@@ -61,6 +61,8 @@ fun AddressBar(
     isPrivateMode: Boolean,
     tabCount: Int,
     isBookmarked: Boolean,
+    searchEngine: SearchEngine = SearchEngine.GOOGLE,
+    isEditingExternally: Boolean? = null,
     onNavigate: (String) -> Unit,
     onReload: () -> Unit,
     onStop: () -> Unit,
@@ -82,8 +84,17 @@ fun AddressBar(
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
 
-    // Real-time search suggestions: Fetch query predictions from Google Search as the user types
-    LaunchedEffect(inputText, isEditing) {
+    LaunchedEffect(isEditingExternally) {
+        if (isEditingExternally == false && isEditing) {
+            isEditing = false
+            suggestions = emptyList()
+            focusManager.clearFocus(force = true)
+            inputText = TextFieldValue(activeTab?.url ?: "")
+        }
+    }
+
+    // Real-time search suggestions: Fetch query predictions from the selected search engine as the user types
+    LaunchedEffect(inputText, isEditing, searchEngine) {
         val trimmed = inputText.text.trim()
         val currentUrl = activeTab?.url?.trim() ?: ""
         if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
@@ -95,7 +106,7 @@ fun AddressBar(
         isLoadingSuggestions = true
         delay(150) // Debounce rapid keystrokes
         val results = try {
-            SearchSuggestionService.getGoogleSuggestions(trimmed, maxResults = 8)
+            SearchSuggestionService.getSuggestions(trimmed, searchEngine, maxResults = 8)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -522,22 +533,22 @@ fun AddressBar(
                                 Icon(
                                     imageVector = Icons.Default.Search,
                                     contentDescription = null,
-                                    tint = Color(0xFF4285F4),
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = "Google Suggestions",
+                                    text = "${searchEngine.displayName} Suggestions",
                                     fontSize = 11.5.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = Color(0xFF4285F4)
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                             if (isLoadingSuggestions) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp),
                                     strokeWidth = 1.5.dp,
-                                    color = Color(0xFF4285F4)
+                                    color = MaterialTheme.colorScheme.primary
                                 )
                             }
                         }
@@ -550,7 +561,7 @@ fun AddressBar(
                         val looksLikeUrl = remember(trimmedQuery) {
                             (trimmedQuery.contains(".") && !trimmedQuery.contains(" ") &&
                                 (trimmedQuery.startsWith("http://") || trimmedQuery.startsWith("https://") ||
-                                    trimmedQuery.matches(Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/.*)?$"))))
+                                    trimmedQuery.matches(Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?([/?#].*)?$"))))
                         }
 
                         LazyColumn(

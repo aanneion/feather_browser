@@ -89,15 +89,17 @@ fun BrowserMenuSheet(
                         }
                     )
                 }
-                QuickMenuActionButton(
-                    icon = Icons.Default.DesktopWindows,
-                    label = if (isDesktopMode) "Mobile Site" else "Desktop Site",
-                    tint = if (isDesktopMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    onClick = {
-                        onDismiss()
-                        onToggleDesktopMode()
-                    }
-                )
+                if (hasActiveUrl) {
+                    QuickMenuActionButton(
+                        icon = Icons.Default.DesktopWindows,
+                        label = if (isDesktopMode) "Mobile Site" else "Desktop Site",
+                        tint = if (isDesktopMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        onClick = {
+                            onDismiss()
+                            onToggleDesktopMode()
+                        }
+                    )
+                }
             }
 
             HorizontalDivider(

@@ -78,6 +78,8 @@ fun UnifiedBottomCommandBar(
     canGoBack: Boolean,
     canGoForward: Boolean,
     isBookmarked: Boolean,
+    searchEngine: SearchEngine = SearchEngine.GOOGLE,
+    isEditingExternally: Boolean? = null,
     onGoBack: () -> Unit,
     onGoForward: () -> Unit,
     onGoHome: () -> Unit,
@@ -104,6 +106,16 @@ fun UnifiedBottomCommandBar(
     val currentView = LocalView.current
     val haptic = LocalHapticFeedback.current
 
+    LaunchedEffect(isEditingExternally) {
+        if (isEditingExternally == false && isEditing) {
+            isEditing = false
+            suggestions = emptyList()
+            keyboardController?.hide()
+            focusManager.clearFocus(force = true)
+            inputText = TextFieldValue(activeTab?.url ?: "")
+        }
+    }
+
     val profileColor = if (isPrivateMode) {
         PrivateModePurple
     } else {
@@ -122,8 +134,8 @@ fun UnifiedBottomCommandBar(
         focusManager.clearFocus(force = true)
     }
 
-    // Real-time search suggestions: Fetch query predictions from Google Search
-    LaunchedEffect(inputText, isEditing) {
+    // Real-time search suggestions: Fetch query predictions from the selected search engine
+    LaunchedEffect(inputText, isEditing, searchEngine) {
         val trimmed = inputText.text.trim()
         val currentUrl = activeTab?.url?.trim() ?: ""
         if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
@@ -135,7 +147,7 @@ fun UnifiedBottomCommandBar(
         isLoadingSuggestions = true
         delay(150)
         val results = try {
-            SearchSuggestionService.getGoogleSuggestions(trimmed, maxResults = 8)
+            SearchSuggestionService.getSuggestions(trimmed, searchEngine, maxResults = 8)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -222,7 +234,7 @@ fun UnifiedBottomCommandBar(
                     .heightIn(max = suggestionsMaxHeight)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    // Header: Google Suggestions branding indicator
+                    // Header for suggestions from the selected search provider
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -234,22 +246,22 @@ fun UnifiedBottomCommandBar(
                             Icon(
                                 imageVector = Icons.Default.Search,
                                 contentDescription = null,
-                                tint = Color(0xFF4285F4),
+                                tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Google Suggestions",
+                                text = "${searchEngine.displayName} Suggestions",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFF4285F4)
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                         if (isLoadingSuggestions) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(12.dp),
                                 strokeWidth = 1.5.dp,
-                                color = Color(0xFF4285F4)
+                                color = MaterialTheme.colorScheme.primary
                             )
                         }
                     }
@@ -262,7 +274,7 @@ fun UnifiedBottomCommandBar(
                     val looksLikeUrl = remember(trimmedQuery) {
                         (trimmedQuery.contains(".") && !trimmedQuery.contains(" ") &&
                             (trimmedQuery.startsWith("http://") || trimmedQuery.startsWith("https://") ||
-                                trimmedQuery.matches(Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?(/.*)?$"))))
+                                trimmedQuery.matches(Regex("^[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?([/?#].*)?$"))))
                     }
 
                     LazyColumn(
@@ -552,6 +564,16 @@ fun UnifiedBottomCommandBar(
                                     modifier = Modifier
                                         .weight(1f)
                                         .focusRequester(focusRequester)
+                                        .onFocusChanged { focusState ->
+                                            if (focusState.isFocused && !isEditing) {
+                                                isEditing = true
+                                                onEditingChanged?.invoke(true)
+                                            } else if (!focusState.isFocused && isEditing) {
+                                                isEditing = false
+                                                suggestions = emptyList()
+                                                onEditingChanged?.invoke(false)
+                                            }
+                                        }
                                         .testTag("unified_address_input")
                                 )
 

@@ -1,6 +1,9 @@
 package com.example.privacy
 
+import android.app.DownloadManager
+import android.content.ContentUris
 import android.content.Context
+import android.net.Uri
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebStorage
@@ -11,6 +14,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class PrivacyManager(private val context: Context, private val database: AppDatabase) {
+
+    private fun removeDownloadFile(fileUri: String?) {
+        val uri = fileUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return
+        if (uri.scheme != "content") return
+        val downloadId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return
+        val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
+        runCatching { manager.remove(downloadId) }
+    }
 
     /**
      * Clears specified browsing data.
@@ -26,6 +37,11 @@ class PrivacyManager(private val context: Context, private val database: AppData
             database.historyDao().deleteAllHistory()
         }
         if (clearDownloads) {
+            // Remove both the history rows and files owned by Android's
+            // DownloadManager; clearing only Room leaves private files behind.
+            database.downloadDao().getAllDownloads().forEach { item ->
+                removeDownloadFile(item.fileUri)
+            }
             database.downloadDao().deleteAllDownloads()
         }
         if (clearCookies) {
