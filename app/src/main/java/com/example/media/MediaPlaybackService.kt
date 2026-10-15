@@ -307,12 +307,12 @@ class MediaPlaybackService : Service() {
                 MediaSessionManager.seekTo(this@MediaPlaybackService, tabId, pos)
             }
 
-            override fun onSeekForward() {
+            override fun onFastForward() {
                 val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
                 MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, SKIP_STEP_SECONDS)
             }
 
-            override fun onSeekBackward() {
+            override fun onRewind() {
                 val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
                 MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, -SKIP_STEP_SECONDS)
             }
@@ -533,7 +533,7 @@ class MediaPlaybackService : Service() {
             isPlaying -> PlaybackStateCompat.STATE_PLAYING
             else -> PlaybackStateCompat.STATE_PAUSED
         }
-        val rate = MediaSessionManager.currentPlaybackRate.value.takeIf { isFinite() && it > 0f } ?: 1f
+        val rate = MediaSessionManager.currentPlaybackRate.value.takeIf { it.isFinite() && it > 0f } ?: 1f
         val speed = if (isPlaying || isBuffering) rate else 0f
         return PlaybackStateCompat.Builder()
             .setActions(
@@ -544,8 +544,8 @@ class MediaPlaybackService : Service() {
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_STOP or
                 PlaybackStateCompat.ACTION_SEEK_TO or
-                PlaybackStateCompat.ACTION_SEEK_FORWARD or
-                PlaybackStateCompat.ACTION_SEEK_BACKWARD or
+                PlaybackStateCompat.ACTION_FAST_FORWARD or
+                PlaybackStateCompat.ACTION_REWIND or
                 PlaybackStateCompat.ACTION_SET_PLAYBACK_SPEED
             )
             .setState(state, positionMs.coerceAtLeast(0L), speed)
