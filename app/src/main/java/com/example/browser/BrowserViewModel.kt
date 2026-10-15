@@ -238,7 +238,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val isAdBlockEnabled = MutableStateFlow(preferences.isAdBlockEnabled())
     val blockThirdPartyCookies = MutableStateFlow(preferences.isBlockThirdPartyCookies())
     val httpsMode = MutableStateFlow(preferences.getHttpsMode())
-    val enableWebDarkMode = MutableStateFlow(preferences.isEnableWebDarkMode())
     val enableBackgroundPlay = MutableStateFlow(preferences.isEnableBackgroundPlay())
     val downloadProvider = MutableStateFlow(preferences.getDownloadProvider())
     val isWeatherOnNewTab = MutableStateFlow(preferences.isWeatherOnNewTab())
@@ -350,11 +349,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun setHttpsMode(mode: HttpsMode) {
         httpsMode.value = mode
         preferences.setHttpsMode(mode)
-    }
-
-    fun setEnableWebDarkMode(enabled: Boolean) {
-        enableWebDarkMode.value = enabled
-        preferences.setEnableWebDarkMode(enabled)
     }
 
     fun setBackgroundPlay(enabled: Boolean) {

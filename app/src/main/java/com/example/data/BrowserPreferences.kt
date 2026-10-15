@@ -20,7 +20,6 @@ class BrowserPreferences(context: Context) {
         private const val KEY_AD_BLOCK_ENABLED = "pref_ad_block_enabled"
         private const val KEY_BLOCK_COOKIES = "pref_block_third_party_cookies"
         private const val KEY_HTTPS_MODE = "pref_https_mode"
-        private const val KEY_WEB_DARK_MODE = "pref_web_dark_mode"
         private const val KEY_BACKGROUND_PLAY = "pref_background_play"
         private const val KEY_DOWNLOAD_PROVIDER = "pref_download_provider"
         private const val KEY_WEATHER_ON_NEW_TAB = "pref_weather_on_new_tab"
@@ -178,14 +177,6 @@ class BrowserPreferences(context: Context) {
 
     fun setHttpsMode(mode: HttpsMode) {
         prefs.edit().putString(KEY_HTTPS_MODE, mode.name).apply()
-    }
-
-    fun isEnableWebDarkMode(): Boolean {
-        return prefs.getBoolean(KEY_WEB_DARK_MODE, false)
-    }
-
-    fun setEnableWebDarkMode(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_WEB_DARK_MODE, enabled).apply()
     }
 
     fun isEnableBackgroundPlay(): Boolean {

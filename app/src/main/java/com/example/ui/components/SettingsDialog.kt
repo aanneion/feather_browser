@@ -31,7 +31,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.webkit.WebViewFeature
 import com.example.browser.*
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -57,8 +56,6 @@ fun SettingsScreen(
     onToggleBlockThirdPartyCookies: (Boolean) -> Unit,
     httpsMode: HttpsMode,
     onHttpsModeChange: (HttpsMode) -> Unit,
-    enableWebDarkMode: Boolean,
-    onToggleWebDarkMode: (Boolean) -> Unit,
     enableBackgroundPlay: Boolean,
     onToggleBackgroundPlay: (Boolean) -> Unit,
     downloadProvider: DownloadProvider,
@@ -80,10 +77,6 @@ fun SettingsScreen(
         } catch (e: Exception) {
             "Android System WebView"
         }
-    }
-
-    val supportsForceDark = remember {
-        WebViewFeature.isFeatureSupported(WebViewFeature.FORCE_DARK)
     }
 
     val supportsMaterialYou = remember {
@@ -245,36 +238,6 @@ fun SettingsScreen(
                             Switch(
                                 checked = useMaterialYou,
                                 onCheckedChange = onToggleMaterialYou
-                            )
-                        }
-                    }
-
-                    if (supportsForceDark) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
-                        )
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Darken Web Content",
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "Applies dark styling to supported websites",
-                                    fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = enableWebDarkMode,
-                                onCheckedChange = onToggleWebDarkMode
                             )
                         }
                     }
