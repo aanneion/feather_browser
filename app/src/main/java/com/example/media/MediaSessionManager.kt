@@ -17,7 +17,8 @@ data class BrowserMediaMetadata(
     val artist: String,
     val album: String = "",
     val artworkUrl: String = "",
-    val tabId: String = ""
+    val tabId: String = "",
+    val durationMs: Long = 0L
 )
 
 enum class MediaControlAction {
@@ -50,6 +51,13 @@ object MediaSessionManager {
     private val _activeMediaTabId = MutableStateFlow<String?>(null)
     val activeMediaTabId = _activeMediaTabId.asStateFlow()
 
+    private val _currentPositionMs = MutableStateFlow(0L)
+    val currentPositionMs = _currentPositionMs.asStateFlow()
+
+    /** Playback speed reported by the page, surfaced in the system media player. */
+    private val _currentPlaybackRate = MutableStateFlow(1f)
+    val currentPlaybackRate = _currentPlaybackRate.asStateFlow()
+
     private val _controlActions = MutableSharedFlow<MediaControlAction>(extraBufferCapacity = 16)
     val controlActions = _controlActions.asSharedFlow()
 
@@ -73,7 +81,8 @@ object MediaSessionManager {
         title: String,
         artist: String,
         album: String = "",
-        artworkUrl: String = ""
+        artworkUrl: String = "",
+        durationMs: Long = 0L
     ) {
         val cleanTitle = title.trim().ifBlank { "Playing Audio" }
         val cleanArtist = artist.trim().ifBlank { "Feather Browser" }
@@ -86,12 +95,14 @@ object MediaSessionManager {
         } else {
             ""
         }
+        val effectiveDuration = if (durationMs > 0) durationMs else (current?.durationMs ?: 0L)
         val meta = BrowserMediaMetadata(
             title = cleanTitle,
             artist = cleanArtist,
             album = album,
             artworkUrl = effectiveArtworkUrl,
-            tabId = tabId
+            tabId = tabId,
+            durationMs = effectiveDuration
         )
         _currentMetadata.value = meta
         _activeMediaTabId.value = tabId
@@ -149,6 +160,23 @@ object MediaSessionManager {
             startOrUpdateService(context)
         } else if (isServiceActive) {
             startOrUpdateService(context)
+        }
+    }
+
+    /**
+     * Runs [script] on the WebView that owns the media session (falling back to any live
+     * WebView) on the main thread, so controls keep working while the app is in the
+     * background.
+     */
+    private fun evaluateOnMediaWebView(tabId: String?, script: String) {
+        val targetTabId = tabId?.takeIf { it.isNotBlank() } ?: _activeMediaTabId.value
+        val webView = targetTabId?.let { webViewRegistry[it]?.get() }
+            ?: webViewRegistry.values.firstNotNullOfOrNull { it.get() }
+            ?: return
+        webView.post {
+            try {
+                webView.evaluateJavascript(script, null)
+            } catch (e: Throwable) { }
         }
     }
 
@@ -214,15 +242,130 @@ object MediaSessionManager {
         _playbackState.value = BrowserPlaybackState.IDLE
         _currentMetadata.value = null
         _activeMediaTabId.value = null
+        _currentPositionMs.value = 0L
+        _currentPlaybackRate.value = 1f
         isServiceActive = false
         stopService(context)
     }
 
+    /** Refreshes the media notification / lock screen player with the current state. */
     fun refreshNotification(context: Context) {
-        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
-        if (isActive && _currentMetadata.value != null) {
+        if (_currentMetadata.value != null) {
             startOrUpdateService(context)
         }
+    }
+
+    /** Human-readable snapshot for logs / debugging the notification pipeline. */
+    fun describeState(): String {
+        val meta = _currentMetadata.value
+        return "state=${_playbackState.value} tab=${_activeMediaTabId.value ?: "-"} " +
+            "title='${meta?.title ?: "-"}' artwork=${!meta?.artworkUrl.isNullOrBlank()} " +
+            "duration=${meta?.durationMs ?: 0} position=${_currentPositionMs.value} " +
+            "rate=${_currentPlaybackRate.value} serviceActive=$isServiceActive"
+    }
+
+    fun updateProgress(context: Context, tabId: String, positionMs: Long, durationMs: Long) {
+        // Ignore keep-alive reports from pages that do not own the media session at all.
+        if (_activeMediaTabId.value != null && _activeMediaTabId.value != tabId) {
+            return
+        }
+        if (_activeMediaTabId.value == null && _currentMetadata.value == null &&
+            _playbackState.value != BrowserPlaybackState.PLAYING &&
+            _playbackState.value != BrowserPlaybackState.BUFFERING
+        ) {
+            return
+        }
+        if (positionMs >= 0) {
+            _currentPositionMs.value = positionMs
+        }
+        val current = _currentMetadata.value
+        if (current != null && current.tabId == tabId) {
+            if (durationMs > 0 && current.durationMs != durationMs) {
+                _currentMetadata.value = current.copy(durationMs = durationMs)
+            }
+        } else if (durationMs > 0) {
+            _currentMetadata.value = BrowserMediaMetadata(
+                title = "YouTube Video",
+                artist = "YouTube",
+                album = "Feather Browser",
+                artworkUrl = "",
+                tabId = tabId,
+                durationMs = durationMs
+            )
+        }
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        // Position updates arrive ~once per second. The running service reads this state
+        // directly from its own ticker, so only make sure that it is actually running -
+        // posting an intent per tick would churn the service for no benefit.
+        if (!isServiceActive && isActive && _currentMetadata.value != null) {
+            startOrUpdateService(context)
+        }
+    }
+
+    fun seekTo(context: Context, tabId: String, positionMs: Long) {
+        if (positionMs >= 0) {
+            _currentPositionMs.value = positionMs
+        }
+        evaluateOnMediaWebView(
+            tabId,
+            "if (window.__feather_media_seek) window.__feather_media_seek($positionMs);"
+        )
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        if (isServiceActive || isActive) {
+            startOrUpdateService(context)
+        }
+    }
+
+    /**
+     * Relative seek for the system media player's skip buttons (the same 10 second steps
+     * Chromium based browsers expose). The reported position is moved optimistically so the
+     * seek bar follows the button press immediately.
+     */
+    fun seekBy(context: Context, tabId: String, deltaSeconds: Double) {
+        if (_activeMediaTabId.value != null && _activeMediaTabId.value != tabId) return
+        val deltaMs = (deltaSeconds * 1000.0).toLong()
+        val durationMs = _currentMetadata.value?.durationMs ?: 0L
+        var target = _currentPositionMs.value + deltaMs
+        if (target < 0L) target = 0L
+        if (durationMs > 0L && target > durationMs) target = durationMs
+        _currentPositionMs.value = target
+        evaluateOnMediaWebView(
+            tabId,
+            "if (window.__feather_media_seek_by) window.__feather_media_seek_by($deltaSeconds);"
+        )
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        if (isServiceActive || isActive) {
+            startOrUpdateService(context)
+        }
+    }
+
+    /** Playback speed reported by the page (used for the system media player's speed chip). */
+    fun updatePlaybackRate(context: Context, tabId: String, rate: Float) {
+        if (_activeMediaTabId.value != null && _activeMediaTabId.value != tabId) return
+        if (rate > 0f && rate.isFinite()) {
+            _currentPlaybackRate.value = rate
+        }
+    }
+
+    /** Applies a new playback speed from the system media player. */
+    fun setPlaybackRate(context: Context, rate: Float) {
+        val value = if (rate > 0f && rate.isFinite()) rate else 1f
+        _currentPlaybackRate.value = value
+        evaluateOnMediaWebView(
+            _activeMediaTabId.value,
+            "if (window.__feather_media_set_rate) window.__feather_media_set_rate($value);"
+        )
+        if (isServiceActive) {
+            startOrUpdateService(context)
+        }
+    }
+
+    /** Ducks (or restores) the page volume while another app temporarily owns audio focus. */
+    fun duckMedia(context: Context, duck: Boolean) {
+        evaluateOnMediaWebView(
+            _activeMediaTabId.value,
+            "if (window.__feather_media_duck) window.__feather_media_duck($duck);"
+        )
     }
 
     private fun startOrUpdateService(context: Context) {

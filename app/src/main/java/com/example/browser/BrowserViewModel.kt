@@ -642,6 +642,17 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         activateTab(tab, autoDismiss)
     }
 
+    /**
+     * Brings the tab that currently owns the media session to the front (used when the media
+     * notification or lock screen player is tapped). Tabs of another profile are ignored so a
+     * background media session can never switch the user's profile unexpectedly.
+     */
+    fun openMediaTab(tabId: String) {
+        if (tabId.isBlank()) return
+        if (currentTabs.value.none { it.id == tabId }) return
+        selectTab(tabId, autoDismiss = false)
+    }
+
     fun closeTab(tabId: String) {
         viewModelScope.launch {
             val allTabs = currentTabs.value

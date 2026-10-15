@@ -37,7 +37,7 @@ Built purely in **Kotlin** and **Jetpack Compose (Material Design 3)**, Feather 
 | 🪶 **Ultra-Lightweight (~1.5 MB)** | 90%+ smaller than standard browsers (Chrome ~150MB, Firefox ~90MB). Stripped of unnecessary bloat, third-party analytics SDKs, and background daemon services. |
 | 👥 **Organized Browsing Profiles** | Separate tabs, bookmarks, history, downloads, and shortcuts for personal, work, and testing workflows. |
 | 🎭 **Web Identity Preferences** | Per-profile user-agent and presentation preferences for compatibility testing; these are not anonymity guarantees. |
-| 🎵 **YouTube & Background Media Play** | Seamless background audio playback when screen is locked or browsing other tabs. Full Android `MediaSession` lock screen and notification bar controls. |
+| 🎵 **YouTube & Background Media Play** | Seamless background audio playback when screen is locked or browsing other tabs. Full Android `MediaSession` lock screen and notification bar controls with per-video thumbnails and a live, seekable progress bar. |
 | 🛡️ **Enhanced Ad & YouTube Blocker** | Inbuilt network-level request interceptor and DOM cleaner that removes web trackers, banner ads, and blocks YouTube video prerolls, midrolls, and promoted videos with auto-skipping. |
 | ⚡ **Instant Cold Boot & Low RAM Usage** | Near-zero startup latency with optimized R8 tree-shaking and memory-efficient Compose layout trees. |
 
@@ -79,9 +79,9 @@ Feather keeps tabs, bookmarks, history, downloads, and shortcuts organized by pr
 
 ## ✨ Feature Highlights
 
-- 🎵 **YouTube & Background Media Playback**: Continue playing audio from YouTube and web media seamlessly in the background when switching tabs, minimizing the browser, or locking the device.
+- 🎵 **YouTube & Background Media Playback**: Continue playing audio from YouTube and web media seamlessly in the background when switching tabs, minimizing the browser, or locking the device, with an audible-tab indicator in the tab manager and correct hand-off between tabs.
 - 📱 **Immersive Full-Screen Web Browsing**: Dynamic auto-hiding top URL bar and bottom navigation dock that glide away when scrolling down and smoothly return when scrolling up.
-- 📱 **Lock Screen & Notification Player Controls**: Full Android `MediaSession` integration providing lock screen playback controls, dynamic video title and artist display, high-resolution artwork thumbnails, and responsive play/pause/skip actions.
+- 📱 **Lock Screen & Notification Player Controls**: Full Android `MediaSession` integration providing lock screen playback controls, live video title, channel and thumbnail artwork that follow every video change, a seek bar synced with the YouTube progress bar, 10-second skip buttons, playback speed control, seeking straight from the notification, lock screen, or headset, and audio focus handling so calls, alarms and navigation prompts pause or duck playback like in Chromium based browsers.
 - 🛡️ **Enhanced YouTube & Web Ad Blocker**: Dual-layer blocking engine combining fast network URL interception with client-side DOM cleansing to block YouTube video ads, banner promos, pop-ups, and trackers without battery overhead.
 - 🎨 **Material You Dynamic Theming**: Adapts seamlessly to your device's Android 12+ wallpaper colors, with Light, Dark, and true Pitch-Black (`#000000`) AMOLED modes.
 - 👥 **Organized Profiles**: Separate tabs, history, bookmarks, downloads, and shortcuts; WebView site storage remains shared by Android.

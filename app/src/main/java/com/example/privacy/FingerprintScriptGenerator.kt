@@ -125,7 +125,9 @@ object FingerprintScriptGenerator {
                 if (window.__feather_bg_play_active) return;
                 window.__feather_bg_play_active = true;
 
-                // 1. Spoof Page Visibility API so media sites report visible and focused
+                // -----------------------------------------------------------------------------
+                // 1. Spoof the Page Visibility API so media sites report visible and focused
+                // -----------------------------------------------------------------------------
                 ['hidden', 'webkitHidden'].forEach(function(prop) {
                     try {
                         Object.defineProperty(document, prop, { get: function() { return false; }, configurable: true, enumerable: true });
@@ -160,27 +162,9 @@ object FingerprintScriptGenerator {
                     });
                 } catch(e) {}
 
-                // Track genuine user interaction vs automatic tab-switch pause
-                let isUserAction = false;
-                let userInteractionTimer = null;
-                
-
-                function markUserAction() {
-                    isUserAction = true;
-                    if (userInteractionTimer) clearTimeout(userInteractionTimer);
-                    userInteractionTimer = setTimeout(function() {
-                        isUserAction = false;
-                    }, 1000);
-                }
-
-                ['click', 'pointerdown', 'touchend', 'keydown'].forEach(function(evt) {
-                    window.addEventListener(evt, markUserAction, true);
-                    document.addEventListener(evt, markUserAction, true);
-                });
-
-                // Removed HTMLMediaElement pause override hack
-
-                // 3. Spoof IntersectionObserver for video / player elements so YouTube mobile doesn't pause when offscreen
+                // -----------------------------------------------------------------------------
+                // 2. Spoof IntersectionObserver so offscreen players do not pause themselves
+                // -----------------------------------------------------------------------------
                 try {
                     if ('IntersectionObserver' in window) {
                         const OrigObserver = window.IntersectionObserver;
@@ -211,42 +195,128 @@ object FingerprintScriptGenerator {
                     }
                 } catch(e) {}
 
-                // 4. Media Session Hooking for Android notification metadata & controls
-                window.__feather_actions = window.__feather_actions || {};
-
-                function getMediaThumbnail() {
+                // -----------------------------------------------------------------------------
+                // 3. Media element helpers
+                // -----------------------------------------------------------------------------
+                function getMediaElements() {
                     try {
-                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artwork && navigator.mediaSession.metadata.artwork.length > 0) {
-                            var art = navigator.mediaSession.metadata.artwork[navigator.mediaSession.metadata.artwork.length - 1].src || '';
-                            if (art) {
-                                if (art.indexOf('//') === 0) art = 'https:' + art;
-                                return art;
+                        return Array.prototype.slice.call(document.querySelectorAll('video, audio'));
+                    } catch(e) {
+                        return [];
+                    }
+                }
+
+                function getActiveMedia() {
+                    const els = getMediaElements();
+                    let first = els.length > 0 ? els[0] : null;
+                    for (let i = 0; i < els.length; i++) {
+                        const el = els[i];
+                        if (!el.paused && !el.ended && el.currentTime > 0 && el.readyState >= 2) return el;
+                    }
+                    for (let i = 0; i < els.length; i++) {
+                        const el = els[i];
+                        if (!el.paused && !el.ended) return el;
+                    }
+                    return first;
+                }
+
+                function isPlayingNow() {
+                    const els = getMediaElements();
+                    for (let i = 0; i < els.length; i++) {
+                        const el = els[i];
+                        if (!el.paused && !el.ended && el.readyState >= 2) return true;
+                    }
+                    return false;
+                }
+
+                function normalizeUrl(u) {
+                    if (!u) return '';
+                    if (u.indexOf('//') === 0) return 'https:' + u;
+                    if (u.indexOf('/') === 0) return 'https://www.youtube.com' + u;
+                    return u;
+                }
+
+                /**
+                 * Id of the video that is playing right now. Read from the live player/DOM and
+                 * from the current URL only - never from og:url / canonical meta tags, which
+                 * keep pointing at the first video of a YouTube SPA session.
+                 */
+                function getYouTubeVideoId() {
+                    try {
+                        const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (player && typeof player.getVideoData === 'function') {
+                            const data = player.getVideoData();
+                            if (data && data.video_id) return data.video_id;
+                        }
+                    } catch(e) {}
+                    try {
+                        const watch = document.querySelector('ytd-watch-flexy, ytm-watch, ytm-single-column-watch-next-results-renderer, [video-id]');
+                        const attr = watch && (watch.getAttribute('video-id') || watch.getAttribute('data-video-id'));
+                        if (attr) return attr;
+                    } catch(e) {}
+                    try {
+                        const searchMatch = window.location.search.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+                        if (searchMatch) return searchMatch[1];
+                        const pathMatch = window.location.pathname.match(/\/(?:shorts|live|v|embed)\/([a-zA-Z0-9_-]{11})/);
+                        if (pathMatch) return pathMatch[1];
+                    } catch(e) {}
+                    try {
+                        const response = window.ytInitialPlayerResponse;
+                        const details = response && response.videoDetails;
+                        if (details && details.videoId) return details.videoId;
+                    } catch(e) {}
+                    return '';
+                }
+
+                function getMediaSessionArtwork() {
+                    try {
+                        const metadata = navigator.mediaSession && navigator.mediaSession.metadata;
+                        if (metadata && metadata.artwork && metadata.artwork.length > 0) {
+                            for (let i = metadata.artwork.length - 1; i >= 0; i--) {
+                                const src = metadata.artwork[i] && metadata.artwork[i].src;
+                                if (src) return normalizeUrl(src);
                             }
                         }
+                    } catch(e) {}
+                    return '';
+                }
+
+                /**
+                 * Thumbnail resolution for the notification / lock screen.
+                 *
+                 * The media session artwork is only trusted while it can be matched against the
+                 * video that is playing right now: YouTube keeps its own metadata around across
+                 * SPA navigations, which previously left the notification showing the thumbnail
+                 * of the first video of the session. When the artwork cannot be verified the
+                 * thumbnail URL is built from the live video id, which is always up to date.
+                 */
+                function getMediaThumbnail() {
+                    const videoId = getYouTubeVideoId();
+                    const sessionArtwork = getMediaSessionArtwork();
+                    if (sessionArtwork && videoId) {
+                        // Only artwork that can be traced back to the video playing right now is
+                        // used as-is; anything else is treated as a leftover of a previous video
+                        // (which is what used to freeze the notification thumbnail).
+                        const artworkId = (sessionArtwork.match(/\/(?:vi|vi_webp)\/([a-zA-Z0-9_-]{11})\//) || [])[1];
+                        if (artworkId === videoId) return sessionArtwork;
+                        return 'https://i.ytimg.com/vi/' + videoId + '/hq720.jpg';
+                    }
+                    if (sessionArtwork) return sessionArtwork;
+                    if (videoId) return 'https://i.ytimg.com/vi/' + videoId + '/hq720.jpg';
+                    try {
                         const ogImage = document.querySelector('meta[property="og:image"]');
-                        if (ogImage && ogImage.content) {
-                            var src = ogImage.content;
-                            if (src.indexOf('//') === 0) src = 'https:' + src;
-                            return src;
-                        }
-                        const urlMatch = window.location.search.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
-                        if (urlMatch && urlMatch[1]) {
-                            return 'https://img.youtube.com/vi/' + urlMatch[1] + '/hqdefault.jpg';
-                        }
-                        const pathnameMatch = window.location.pathname.match(/\/(shorts|watch|v)\/([a-zA-Z0-9_-]{11})/);
-                        if (pathnameMatch && pathnameMatch[2]) {
-                            return 'https://img.youtube.com/vi/' + pathnameMatch[2] + '/hqdefault.jpg';
-                        }
+                        if (ogImage && ogImage.content) return normalizeUrl(ogImage.content);
                     } catch(e) {}
                     return '';
                 }
 
                 function getMediaTitle() {
                     try {
-                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.title) {
-                            return navigator.mediaSession.metadata.title;
+                        const metadata = navigator.mediaSession && navigator.mediaSession.metadata;
+                        if (metadata && metadata.title && metadata.title.trim()) {
+                            return metadata.title.trim();
                         }
-                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link, [class*="video-title"], ytm-video-description-header-renderer .title, h2.video-title');
+                        const ytTitle = document.querySelector('h1.title, .slim-video-metadata-title, ytm-slim-video-metadata-section-renderer .slim-video-information-title, ytd-watch-metadata #title h1, .ytp-title-link, ytm-video-description-header-renderer .title, h2.video-title');
                         if (ytTitle && ytTitle.innerText && ytTitle.innerText.trim()) {
                             return ytTitle.innerText.trim();
                         }
@@ -262,10 +332,11 @@ object FingerprintScriptGenerator {
 
                 function getMediaArtist() {
                     try {
-                        if (navigator.mediaSession && navigator.mediaSession.metadata && navigator.mediaSession.metadata.artist) {
-                            return navigator.mediaSession.metadata.artist;
+                        const metadata = navigator.mediaSession && navigator.mediaSession.metadata;
+                        if (metadata && metadata.artist && metadata.artist.trim()) {
+                            return metadata.artist.trim();
                         }
-                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name, .slim-owner-channel-name, [class*="channel-name"]');
+                        const ytAuthor = document.querySelector('.ytm-channel-thumbnail-with-profile-name .profile-name, #owner-name a, #channel-name a, ytd-channel-name a, .ytm-media-item-metadata .channel-name, .slim-owner-channel-name');
                         if (ytAuthor && ytAuthor.innerText && ytAuthor.innerText.trim()) {
                             return ytAuthor.innerText.trim();
                         }
@@ -277,6 +348,9 @@ object FingerprintScriptGenerator {
                     return 'YouTube';
                 }
 
+                // -----------------------------------------------------------------------------
+                // 4. Bridge: metadata + playback state for the Android media notification
+                // -----------------------------------------------------------------------------
                 let wasActivePlayback = false;
 
                 function notifyMediaBridge(isPlaying) {
@@ -284,18 +358,72 @@ object FingerprintScriptGenerator {
                         if (!window.FeatherMediaBridge) return;
                         if (isPlaying) {
                             wasActivePlayback = true;
-                            const title = getMediaTitle();
-                            const artist = getMediaArtist();
-                            const art = getMediaThumbnail();
-                            window.FeatherMediaBridge.updateMetadata(title, artist, 'YouTube', art);
+                            window.FeatherMediaBridge.updateMetadata(
+                                getMediaTitle(),
+                                getMediaArtist(),
+                                'YouTube',
+                                getMediaThumbnail()
+                            );
                             window.FeatherMediaBridge.updatePlaybackState('PLAYING');
-                        } else {
-                            if (wasActivePlayback) {
-                                window.FeatherMediaBridge.updatePlaybackState('PAUSED');
-                            }
+                        } else if (wasActivePlayback) {
+                            window.FeatherMediaBridge.updatePlaybackState('PAUSED');
                         }
                     } catch(e) {}
                 }
+
+                // -----------------------------------------------------------------------------
+                // 5. Position / duration reporting (system seek bar)
+                // -----------------------------------------------------------------------------
+                let lastPositionSeconds = -1;
+                let lastDurationSeconds = -1;
+                let lastPositionPushAt = 0;
+                let positionFromSession = null;
+
+                function pushPosition(positionSeconds, durationSeconds, force) {
+                    try {
+                        if (!window.FeatherMediaBridge || typeof window.FeatherMediaBridge.updateProgress !== 'function') return;
+                        const now = Date.now();
+                        const posRounded = Math.max(0, Math.round(positionSeconds));
+                        const durRounded = Math.max(0, Math.round(durationSeconds));
+                        const changed = Math.abs(posRounded - lastPositionSeconds) >= 1 || Math.abs(durRounded - lastDurationSeconds) >= 1;
+                        if (!force) {
+                            // Throttle to ~1 push/second, with a slow heartbeat so the notification
+                            // recovers even if a single report gets lost.
+                            if (now - lastPositionPushAt < 900) return;
+                            if (!changed && now - lastPositionPushAt < 5000) return;
+                        }
+                        lastPositionPushAt = now;
+                        lastPositionSeconds = posRounded;
+                        lastDurationSeconds = durRounded;
+                        window.FeatherMediaBridge.updateProgress(posRounded * 1000, durRounded * 1000);
+                    } catch(e) {}
+                }
+
+                function publishPosition(force) {
+                    try {
+                        const media = getActiveMedia();
+                        let position = -1;
+                        let duration = 0;
+                        if (media) {
+                            if (typeof media.currentTime === 'number' && isFinite(media.currentTime) && media.currentTime >= 0) position = media.currentTime;
+                            if (typeof media.duration === 'number' && isFinite(media.duration) && media.duration > 0) duration = media.duration;
+                        }
+                        if (positionFromSession) {
+                            if (position < 0) position = positionFromSession.position;
+                            if (duration <= 0) duration = positionFromSession.duration;
+                        }
+                        if (position < 0) return;
+                        // Live streams report Infinity: without a duration the system seek bar
+                        // stays hidden, which is exactly the behaviour we want.
+                        if (!isFinite(duration) || duration < 0) duration = 0;
+                        pushPosition(position, duration, !!force);
+                    } catch(e) {}
+                }
+
+                // -----------------------------------------------------------------------------
+                // 6. Media Session hooking (metadata, position state, action handlers)
+                // -----------------------------------------------------------------------------
+                window.__feather_actions = window.__feather_actions || {};
 
                 try {
                     if ('mediaSession' in navigator) {
@@ -319,25 +447,41 @@ object FingerprintScriptGenerator {
                                     }
                                     try {
                                         if (window.FeatherMediaBridge && val) {
-                                            let artUrl = '';
-                                            if (val.artwork && val.artwork.length > 0) {
-                                                artUrl = val.artwork[val.artwork.length - 1].src || '';
-                                            }
-                                            const t = val.title || getMediaTitle();
-                                            const a = val.artist || getMediaArtist();
+                                            // Thumbnail comes from the resolver, which validates
+                                            // the session artwork against the video playing now.
                                             window.FeatherMediaBridge.updateMetadata(
-                                                t,
-                                                a,
+                                                val.title || getMediaTitle(),
+                                                val.artist || getMediaArtist(),
                                                 val.album || 'YouTube',
-                                                artUrl || getMediaThumbnail()
+                                                getMediaThumbnail()
                                             );
-                                            window.FeatherMediaBridge.updatePlaybackState('PLAYING');
+                                            window.FeatherMediaBridge.updatePlaybackState(isPlayingNow() ? 'PLAYING' : 'PAUSED');
                                         }
                                     } catch(e) {}
                                 },
                                 configurable: true,
                                 enumerable: true
                             });
+                        } catch(e) {}
+
+                        // setPositionState is the web platform's source of truth for "where is
+                        // playback right now"; forward it to the Android media session so the
+                        // notification seek bar follows the player instead of guessing.
+                        try {
+                            const origSetPositionState = ms.setPositionState;
+                            if (typeof origSetPositionState === 'function') {
+                                ms.setPositionState = function(state) {
+                                    try {
+                                        if (state) {
+                                            const duration = (typeof state.duration === 'number' && isFinite(state.duration) && state.duration > 0) ? state.duration : 0;
+                                            const position = (typeof state.position === 'number' && isFinite(state.position) && state.position >= 0) ? state.position : 0;
+                                            positionFromSession = { position: position, duration: duration };
+                                            pushPosition(position, duration, false);
+                                        }
+                                    } catch(e) {}
+                                    try { return origSetPositionState.call(ms, state); } catch(e) {}
+                                };
+                            }
                         } catch(e) {}
 
                         try {
@@ -354,7 +498,9 @@ object FingerprintScriptGenerator {
                     }
                 } catch(e) {}
 
-                // 5. Media control methods callable from notification bar
+                // -----------------------------------------------------------------------------
+                // 7. Media control methods callable from the notification bar
+                // -----------------------------------------------------------------------------
                 function scheduleTrackChecks() {
                     setTimeout(monitorMedia, 250);
                     setTimeout(monitorMedia, 700);
@@ -377,22 +523,20 @@ object FingerprintScriptGenerator {
                         }
                     } catch(e) {}
                     try {
-                        const playBtn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, ytm-custom-control-button, [aria-label*="Play"]');
+                        const playBtn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, [aria-label*="Play"]');
                         if (playBtn) {
                             playBtn.click();
                             return;
                         }
                     } catch(e) {}
                     try {
-                        const mediaEls = document.querySelectorAll('video, audio');
-                        mediaEls.forEach(function(m) {
+                        getMediaElements().forEach(function(m) {
                             if (m.paused) m.play().catch(function() {});
                         });
                     } catch(e) {}
                 };
 
                 window.__feather_media_pause = function() {
-                    
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['pause'] === 'function') {
                             window.__feather_actions['pause']();
@@ -405,22 +549,14 @@ object FingerprintScriptGenerator {
                         }
                     } catch(e) {}
                     try {
-                        const pauseBtn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, ytm-custom-control-button, [aria-label*="Pause"]');
-                        if (pauseBtn) {
-                            pauseBtn.click();
-                        }
-                    } catch(e) {}
-                    try {
-                        const mediaEls = document.querySelectorAll('video, audio');
-                        mediaEls.forEach(function(m) {
+                        getMediaElements().forEach(function(m) {
                             if (!m.paused) m.pause();
                         });
                     } catch(e) {}
-                    
                 };
 
                 window.__feather_media_toggle = function() {
-                    const video = document.querySelector('video, audio');
+                    const video = getActiveMedia();
                     if (video) {
                         if (video.paused) {
                             window.__feather_media_play();
@@ -428,9 +564,104 @@ object FingerprintScriptGenerator {
                             window.__feather_media_pause();
                         }
                     } else {
-                        const btn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, ytm-custom-control-button, [aria-label*="Play"], [aria-label*="Pause"]');
+                        const btn = document.querySelector('.ytp-play-button, .player-control-play-pause-icon, [aria-label*="Play"], [aria-label*="Pause"]');
                         if (btn) btn.click();
                     }
+                };
+
+                /**
+                 * Seek support for the system seek bar (Android media notification, lock screen,
+                 * Bluetooth/headset, Android Auto). Uses YouTube's own seekto handler first so
+                 * the player UI stays in sync with the jump.
+                 */
+                window.__feather_media_seek = function(positionMs) {
+                    const seconds = Math.max(0, (typeof positionMs === 'number' ? positionMs : 0) / 1000);
+                    try {
+                        if (window.__feather_actions && typeof window.__feather_actions['seekto'] === 'function') {
+                            window.__feather_actions['seekto']({ seekTime: seconds, fastSeek: false });
+                            positionFromSession = { position: seconds, duration: (positionFromSession && positionFromSession.duration) || 0 };
+                            scheduleTrackChecks();
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        const moviePlayer = document.getElementById('movie_player');
+                        if (moviePlayer && typeof moviePlayer.seekTo === 'function') {
+                            moviePlayer.seekTo(seconds, true);
+                            positionFromSession = { position: seconds, duration: (positionFromSession && positionFromSession.duration) || 0 };
+                            scheduleTrackChecks();
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        const media = getActiveMedia();
+                        if (media) media.currentTime = seconds;
+                    } catch(e) {}
+                    scheduleTrackChecks();
+                };
+
+                /**
+                 * Relative seek used by the notification / lock screen / headset skip buttons
+                 * (Chromium exposes the same 10 second steps).
+                 */
+                window.__feather_media_seek_by = function(deltaSeconds) {
+                    const delta = (typeof deltaSeconds === 'number' && isFinite(deltaSeconds)) ? deltaSeconds : 0;
+                    const media = getActiveMedia();
+                    let current = -1;
+                    let duration = 0;
+                    if (media) {
+                        if (typeof media.currentTime === 'number' && isFinite(media.currentTime) && media.currentTime >= 0) current = media.currentTime;
+                        if (typeof media.duration === 'number' && isFinite(media.duration) && media.duration > 0) duration = media.duration;
+                    }
+                    if (current < 0 && positionFromSession) current = positionFromSession.position;
+                    if (duration <= 0 && positionFromSession) duration = positionFromSession.duration;
+                    if (current < 0) return;
+                    let target = current + delta;
+                    if (target < 0) target = 0;
+                    if (duration > 0) target = Math.min(target, Math.max(0, duration - 1));
+                    window.__feather_media_seek(Math.round(target * 1000));
+                };
+
+                /**
+                 * Playback speed, mirroring the playback speed control the system media player
+                 * offers for Chromium based browsers.
+                 */
+                window.__feather_media_set_rate = function(rate) {
+                    const value = (typeof rate === 'number' && isFinite(rate) && rate > 0) ? rate : 1;
+                    try {
+                        const moviePlayer = document.getElementById('movie_player');
+                        if (moviePlayer && typeof moviePlayer.setPlaybackRate === 'function') {
+                            if (typeof moviePlayer.getAvailablePlaybackRates === 'function') {
+                                const available = moviePlayer.getAvailablePlaybackRates() || [];
+                                if (available.indexOf(value) === -1) return;
+                            }
+                            moviePlayer.setPlaybackRate(value);
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        getMediaElements().forEach(function(m) { m.playbackRate = value; });
+                    } catch(e) {}
+                };
+
+                /**
+                 * Temporary volume ducking (navigation prompts, alarms) - what Chromium does with
+                 * audio focus instead of pausing playback outright.
+                 */
+                window.__feather_media_duck = function(duck) {
+                    try {
+                        getMediaElements().forEach(function(m) {
+                            if (duck) {
+                                if (typeof m.__feather_saved_volume !== 'number') {
+                                    m.__feather_saved_volume = (typeof m.volume === 'number') ? m.volume : 1;
+                                }
+                                m.volume = Math.max(0, Math.min(1, m.__feather_saved_volume * 0.2));
+                            } else if (typeof m.__feather_saved_volume === 'number') {
+                                m.volume = m.__feather_saved_volume;
+                                delete m.__feather_saved_volume;
+                            }
+                        });
+                    } catch(e) {}
                 };
 
                 window.__feather_media_next = function() {
@@ -468,10 +699,13 @@ object FingerprintScriptGenerator {
                     scheduleTrackChecks();
                 };
 
-                // 6. Periodic monitor & watchdog for HTML media elements
+                // -----------------------------------------------------------------------------
+                // 8. Periodic monitor & watchdog for HTML media elements
+                // -----------------------------------------------------------------------------
                 let lastReportedState = null;
                 let lastReportedTitle = '';
                 let lastReportedArt = '';
+                let lastReportedVideoId = '';
 
                 function hookMediaElement(el) {
                     if (!el || el.__feather_monitored) return;
@@ -482,8 +716,25 @@ object FingerprintScriptGenerator {
                         notifyMediaBridge(true);
                     }
 
+                    function reportRate() {
+                        try {
+                            if (window.FeatherMediaBridge && typeof window.FeatherMediaBridge.updatePlaybackRate === 'function') {
+                                window.FeatherMediaBridge.updatePlaybackRate(el.playbackRate);
+                            }
+                        } catch(e) {}
+                    }
+
                     el.addEventListener('play', handlePlay);
                     el.addEventListener('playing', handlePlay);
+                    el.addEventListener('ratechange', reportRate);
+                    reportRate();
+                    el.addEventListener('loadedmetadata', function() { publishPosition(true); });
+                    el.addEventListener('durationchange', function() { publishPosition(true); });
+                    el.addEventListener('seeked', function() {
+                        // Keep the system seek bar in step with in-player seeks / double-tap
+                        // and preview scrubs instead of waiting for the next poll tick.
+                        publishPosition(true);
+                    });
                     el.addEventListener('timeupdate', function() {
                         if (!el.paused && !el.ended && !wasActivePlayback) {
                             wasActivePlayback = true;
@@ -493,7 +744,7 @@ object FingerprintScriptGenerator {
 
                     el.addEventListener('pause', function() {
                         setTimeout(function() {
-                            const anyPlaying = Array.from(document.querySelectorAll('video, audio')).some(function(m) {
+                            const anyPlaying = getMediaElements().some(function(m) {
                                 return !m.paused && !m.ended;
                             });
                             if (!anyPlaying) {
@@ -512,7 +763,7 @@ object FingerprintScriptGenerator {
 
                 const monitorMedia = function() {
                     try {
-                        const els = document.querySelectorAll('video, audio');
+                        const els = getMediaElements();
                         let anyPlaying = false;
                         els.forEach(function(el) {
                             hookMediaElement(el);
@@ -527,10 +778,13 @@ object FingerprintScriptGenerator {
 
                         const currentTitle = getMediaTitle();
                         const currentArt = getMediaThumbnail();
-                        if (anyPlaying !== lastReportedState || (anyPlaying && (currentTitle !== lastReportedTitle || currentArt !== lastReportedArt))) {
+                        const currentVideoId = getYouTubeVideoId();
+                        const trackChanged = currentVideoId !== lastReportedVideoId;
+                        if (anyPlaying !== lastReportedState || trackChanged || (anyPlaying && (currentTitle !== lastReportedTitle || currentArt !== lastReportedArt))) {
                             lastReportedState = anyPlaying;
                             lastReportedTitle = currentTitle;
                             lastReportedArt = currentArt;
+                            lastReportedVideoId = currentVideoId;
                             if (anyPlaying || wasActivePlayback) {
                                 notifyMediaBridge(anyPlaying);
                             }
@@ -539,6 +793,9 @@ object FingerprintScriptGenerator {
                 };
                 if (!window.__feather_media_interval) {
                     window.__feather_media_interval = setInterval(monitorMedia, 1500);
+                }
+                if (!window.__feather_media_position_interval) {
+                    window.__feather_media_position_interval = setInterval(function() { publishPosition(false); }, 1000);
                 }
                 window.addEventListener('popstate', scheduleTrackChecks);
                 window.addEventListener('yt-navigate-finish', scheduleTrackChecks);

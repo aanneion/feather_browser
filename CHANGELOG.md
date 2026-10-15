@@ -7,7 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **🎧 Chromium-Style Media Session Features for Background Playback**: the media notification / lock screen player now behaves like a full media app, matching what Chromium based browsers expose to the system.
+  - **Audio focus**: playback takes Android audio focus while media plays, so phone calls, alarms and navigation prompts pause the video and resume it afterwards, prompts that only need to be heard duck the volume instead of stopping playback, and unplugging headphones pauses media (`ACTION_AUDIO_BECOMING_NOISY`) — same behaviour as Chromium's audio focus manager.
+  - **Skip buttons**: the system media player's rewind / fast forward buttons move the video by 10 seconds at a time, clamped to the start and end of the video.
+  - **Playback speed**: the notification advertises playback speed support and reports the real speed, so changing speed in YouTube is reflected in the system player and the player's speed control drives the video.
+  - **Open the playing tab**: tapping the notification / lock screen player now returns to the tab that owns the media session instead of whatever tab was open last (tabs from another profile are ignored).
+  - **Audible tab indicator**: the tab manager marks the tab that is currently playing media, so background audio can be traced at a glance.
+
 ### Fixed
+- **🖼️ Media Notification Thumbnail Now Follows the Video Being Played**:
+  - The lock screen / notification artwork is resolved from the video that is playing right now instead of whatever metadata YouTube left behind: the session artwork is validated against the live video id, and a fresh thumbnail URL is built from that id whenever it cannot be matched.
+  - Changing videos (including autoplay and playlist advance) always replaces the artwork; stale thumbnails from an earlier video can no longer stick to the notification.
+  - Thumbnail downloads retry automatically with YouTube's guaranteed quality variants (`maxresdefault` → `sddefault` → `hqdefault` → `mqdefault`) and are center-cropped to a square, so videos without a high-resolution storyboard still get real artwork without letterboxed black bars.
+- **⏱️ Media Notification Progress Bar Is Now Synced with the YouTube Player**:
+  - Position and duration are reported from the page (media `timeupdate`/`seeked`/`durationchange` events plus `navigator.mediaSession.setPositionState`) and published as a real `PlaybackState` with `ACTION_SEEK_TO`, which is what Android 13+ needs to draw the notification / lock screen seek bar.
+  - The media service re-publishes the live position once per second, so the seek bar keeps moving between page reports instead of being stuck or drifting.
+  - Dragging the notification seek bar (or seeking from the lock screen, headset, or Android Auto) now seeks the actual YouTube player through its own `seekto` handler, keeping the in-player UI in sync.
+  - Live streams correctly report no duration, so the seek bar stays hidden instead of jumping around.
+- **▶️ YouTube Seek Previews No Longer Freeze or Need an Extra Tap**:
+  - The YouTube ad skipper now only reacts while the player itself reports an ad (`.html5-video-player.ad-showing` / `.ad-interrupting`). The previous loose `.ytp-ad-player-overlay` match stayed true during normal playback, which muted the video, forced 16x speed, and jumped the playhead to the end whenever the user scrubbed or used the precise-seek preview.
+  - Ad handling is suspended while a drag/scrub/precise-seek gesture is in flight, and `muted` / `playbackRate` are restored as soon as the ad is over instead of leaking into the video.
+  - Replaced the document-wide `MutationObserver` (`subtree: true, attributes: true` over `document.body`) with an observer scoped to the player's class list and a 500 ms fallback interval — the old observer ran the ad scan hundreds of times per second during scrubbing and stalled the page's UI thread, which is what made seek previews appear to pause.
+- **🔔 Notification State Accuracy**:
+  - Playback state is reported from the actual media elements instead of being assumed, so seeking, buffering, and pausing no longer flip the notification to the wrong state while the video keeps playing.
 - **🎨 Websites Now Follow the Browser Theme (Light/Dark)**:
   - Websites always render with the same scheme as the browser theme setting (Light / Dark / AMOLED / System) instead of following the device-wide day/night mode — a phone in system dark mode with the browser set to Light no longer opens websites dark.
   - `prefers-color-scheme` is now pinned via a dedicated light/dark WebView theme (`android:isLightTheme`) applied to the WebView's context, per the Android WebView dark-theme contract, instead of the untracked app theme.

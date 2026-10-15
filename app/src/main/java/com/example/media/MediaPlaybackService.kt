@@ -1,8 +1,13 @@
 package com.example.media
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -13,6 +18,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.example.MainActivity
 import com.example.R
@@ -32,6 +38,19 @@ class MediaPlaybackService : Service() {
         const val NOTIFICATION_ID = 2001
         private const val TAG = "MediaPlaybackService"
 
+        /** Position is re-published to the media session once per second while playing. */
+        private const val TICKER_INTERVAL_MS = 1000L
+
+        /** How long a failed artwork download is remembered before it is retried. */
+        private const val ARTWORK_RETRY_COOLDOWN_MS = 60_000L
+
+        /** Skip step used by the system media player's rewind / fast forward buttons. */
+        private const val SKIP_STEP_SECONDS = 10.0
+
+        /** Extra carrying the tab that owns the media session, so tapping the notification
+         *  brings the user back to the page that is actually playing. */
+        const val EXTRA_MEDIA_TAB_ID = "com.example.media.EXTRA_MEDIA_TAB_ID"
+
         const val ACTION_UPDATE_STATE = "com.example.media.UPDATE_STATE"
         const val ACTION_PLAY = "com.example.media.PLAY"
         const val ACTION_PAUSE = "com.example.media.PAUSE"
@@ -40,7 +59,9 @@ class MediaPlaybackService : Service() {
         const val ACTION_PREV = "com.example.media.PREV"
         const val ACTION_STOP = "com.example.media.STOP"
 
-        private val artworkCache = LruCache<String, Bitmap>(20)
+        // Only the artwork of the current / recently played videos is needed; 8 square
+        // 512px thumbnails keep the cache well under a couple of megabytes.
+        private val artworkCache = LruCache<String, Bitmap>(8)
 
         /**
          * Creates the media notification channel. Safe to call from anywhere (also invoked
@@ -97,13 +118,108 @@ class MediaPlaybackService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var cachedArtworkUrl: String = ""
     private var cachedArtworkBitmap: Bitmap? = null
+    private var cachedArtworkTitleKey: String = ""
+    private var artworkRequestId = 0
+    private val inFlightArtwork = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val failedArtwork = java.util.Collections.synchronizedMap(mutableMapOf<String, Long>())
+
+    // Keeps the system media seek bar (Android 13+ notification, lock screen, Bluetooth,
+    // Android Auto) moving between the once-per-second position reports that arrive from the
+    // page, so the bar never freezes or drifts away from the player's own progress bar.
+    private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var lastPushedPositionMs = -1L
+    private var lastPushedState = -1
+    private var lastPushedRate = -1f
+    private var tickerRunning = false
+    private val progressTicker = object : Runnable {
+        override fun run() {
+            tickerRunning = false
+            try {
+                val state = MediaSessionManager.playbackState.value
+                val isActive = state == BrowserPlaybackState.PLAYING || state == BrowserPlaybackState.BUFFERING
+                if (!isActive) return
+                pushPlaybackStateOnly()
+                tickerRunning = true
+                progressHandler.postDelayed(this, TICKER_INTERVAL_MS)
+            } catch (e: Throwable) {
+                tickerRunning = false
+            }
+        }
+    }
     // Set when the service is (re)started solely to process a STOP command, so onCreate
     // does not promote an empty service to foreground and briefly post a phantom notification.
     private var pendingStop = false
 
+    // --- Audio focus handling (what Chromium does through its AudioFocusManager) -------------
+    private val audioManager: AudioManager? by lazy {
+        try { getSystemService(Context.AUDIO_SERVICE) as? AudioManager } catch (e: Throwable) { null }
+    }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus = false
+    private var resumeOnFocusGain = false
+
+    /** Pauses playback in the page and immediately reflects it in the notification. */
+    private fun pauseForAudioFocus() {
+        try {
+            MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
+            updateNotificationAndSession()
+        } catch (e: Throwable) { }
+    }
+
+    /** Resumes playback in the page and immediately reflects it in the notification. */
+    private fun resumeForAudioFocus() {
+        try {
+            resumeOnFocusGain = false
+            MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
+            updateNotificationAndSession()
+        } catch (e: Throwable) { }
+    }
+
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        try {
+            when (change) {
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    MediaSessionManager.duckMedia(this, false)
+                    val otherAppPlaying = try { audioManager?.isMusicActive == true } catch (e: Throwable) { false }
+                    if (resumeOnFocusGain && !otherAppPlaying) {
+                        resumeForAudioFocus()
+                    } else if (otherAppPlaying) {
+                        // Another app took over the speakers; do not fight it for audio.
+                        resumeOnFocusGain = false
+                    }
+                }
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    resumeOnFocusGain = false
+                    abandonAudioFocus()
+                    pauseForAudioFocus()
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    // Phone call, alarm, navigation prompt: pause and resume afterwards.
+                    resumeOnFocusGain = true
+                    pauseForAudioFocus()
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    MediaSessionManager.duckMedia(this, true)
+                }
+            }
+        } catch (e: Throwable) { }
+    }
+
+    // Headphones unplugged: Chromium pauses media, and so do we.
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                android.util.Log.i(TAG, "ACTION_AUDIO_BECOMING_NOISY -> pausing playback")
+                pauseForAudioFocus()
+            }
+        }
+    }
+    private var noisyReceiverRegistered = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel(this)
+        registerNoisyReceiver()
         setupMediaSession()
 
         val metadata = MediaSessionManager.currentMetadata.value
@@ -134,6 +250,22 @@ class MediaPlaybackService : Service() {
         promoteToForeground(initialNotification)
     }
 
+    /** PendingIntent that reopens the browser on the tab which is playing media. */
+    private fun buildSessionActivityIntent(tabId: String): PendingIntent {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (tabId.isNotBlank()) {
+                putExtra(EXTRA_MEDIA_TAB_ID, tabId)
+            }
+        }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun setupMediaSession() {
         val session = MediaSessionCompat(this, "FeatherMediaSession")
         session.setFlags(
@@ -141,16 +273,7 @@ class MediaPlaybackService : Service() {
             MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
         )
 
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val sessionActivityIntent = PendingIntent.getActivity(
-            this,
-            0,
-            openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        session.setSessionActivity(sessionActivityIntent)
+        session.setSessionActivity(buildSessionActivityIntent(MediaSessionManager.activeMediaTabId.value ?: ""))
 
         session.setCallback(object : MediaSessionCompat.Callback() {
             override fun onPlay() {
@@ -170,12 +293,32 @@ class MediaPlaybackService : Service() {
             }
 
             override fun onStop() {
+                stopProgressTicker()
                 MediaSessionManager.stopPlayback(this@MediaPlaybackService)
                 session.isActive = false
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 manager?.cancel(NOTIFICATION_ID)
                 stopSelf()
+            }
+
+            override fun onSeekTo(pos: Long) {
+                val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
+                MediaSessionManager.seekTo(this@MediaPlaybackService, tabId, pos)
+            }
+
+            override fun onSeekForward() {
+                val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
+                MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, SKIP_STEP_SECONDS)
+            }
+
+            override fun onSeekBackward() {
+                val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
+                MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, -SKIP_STEP_SECONDS)
+            }
+
+            override fun onSetPlaybackSpeed(speed: Float) {
+                MediaSessionManager.setPlaybackRate(this@MediaPlaybackService, speed)
             }
         })
 
@@ -194,6 +337,8 @@ class MediaPlaybackService : Service() {
             ACTION_NEXT -> MediaSessionManager.dispatchAction(MediaControlAction.NEXT)
             ACTION_PREV -> MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
             ACTION_STOP -> {
+                stopProgressTicker()
+                abandonAudioFocus()
                 MediaSessionManager.stopPlayback(this)
                 mediaSession?.setActive(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -234,6 +379,8 @@ class MediaPlaybackService : Service() {
         val isPlaying = (MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING)
 
         if (metadata == null && !isPlaying) {
+            stopProgressTicker()
+            abandonAudioFocus()
             mediaSession?.setActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -241,42 +388,58 @@ class MediaPlaybackService : Service() {
             stopSelf()
             return
         }
+        if (!isPlaying) stopProgressTicker()
 
         val title = metadata?.title?.ifBlank { "Media Playing" } ?: "Media Playing"
         val artist = metadata?.artist?.ifBlank { "Feather Browser" } ?: "YouTube"
         val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
         val artworkUrl = metadata?.artworkUrl?.trim() ?: ""
+        val durationMs = metadata?.durationMs ?: 0L
+        val positionMs = MediaSessionManager.currentPositionMs.value
 
         if (artworkUrl.isNotBlank()) {
             if (artworkUrl != cachedArtworkUrl) {
+                // A new video (or a re-resolved thumbnail) always invalidates the previous
+                // bitmap so the notification can never keep showing the old thumbnail.
                 cachedArtworkUrl = artworkUrl
                 cachedArtworkBitmap = artworkCache.get(artworkUrl)
+                artworkRequestId++
             }
         } else {
             cachedArtworkUrl = ""
             cachedArtworkBitmap = null
         }
+        val trackKey = (metadata?.tabId ?: "") + "|" + title
+        if (trackKey != cachedArtworkTitleKey) {
+            cachedArtworkTitleKey = trackKey
+            artworkRequestId++
+        }
 
-        // Update MediaSession state
-        val isBuffering = MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING; val state = if (isBuffering) PlaybackStateCompat.STATE_BUFFERING else if (isPlaying) PlaybackStateCompat.STATE_PLAYING else PlaybackStateCompat.STATE_PAUSED
-        val playbackState = PlaybackStateCompat.Builder()
-            .setActions(
-                PlaybackStateCompat.ACTION_PLAY or
-                PlaybackStateCompat.ACTION_PAUSE or
-                PlaybackStateCompat.ACTION_PLAY_PAUSE or
-                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
-                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
-                PlaybackStateCompat.ACTION_STOP
-            )
-            .setState(state, PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1.0f)
-            .build()
+        // Update MediaSession state (position + duration drive the system seek bar)
+        val isBuffering = MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING
+        val playbackState = buildPlaybackState(isPlaying, isBuffering, positionMs)
         mediaSession?.setPlaybackState(playbackState)
         mediaSession?.isActive = true
+        lastPushedPositionMs = positionMs
+        lastPushedState = playbackState.state
+        lastPushedRate = MediaSessionManager.currentPlaybackRate.value
+
+        // Keep the position flowing between the once-per-second reports from the page, and
+        // hold audio focus exactly while media is playing.
+        if (isPlaying) {
+            requestAudioFocusIfNeeded()
+            startProgressTicker()
+        } else {
+            abandonAudioFocus()
+        }
 
         val metaBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, artist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, album)
+        if (durationMs > 0L) {
+            metaBuilder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, durationMs)
+        }
 
         if (cachedArtworkBitmap != null) {
             metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, cachedArtworkBitmap)
@@ -284,50 +447,221 @@ class MediaPlaybackService : Service() {
         }
         mediaSession?.setMetadata(metaBuilder.build())
 
+        // Tapping the notification / lock screen player returns to the tab that owns the
+        // media session instead of whatever tab was open last.
+        mediaSession?.setSessionActivity(buildSessionActivityIntent(metadata?.tabId ?: ""))
+
         val notification = buildNotification(title, artist, album, isPlaying, cachedArtworkBitmap)
         promoteToForeground(notification)
+        android.util.Log.i(TAG, "notify -> ${MediaSessionManager.describeState()}")
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.notify(NOTIFICATION_ID, notification)
         } catch (e: Exception) { }
 
-        // Asynchronously fetch artwork if new URL provided and not yet cached in memory
+        // Asynchronously fetch artwork when the URL is new (or a previous attempt failed)
         if (artworkUrl.isNotBlank() && cachedArtworkBitmap == null) {
             val targetUrl = artworkUrl
-            serviceScope.launch {
-                val bmp = fetchBitmap(targetUrl)
-                if (bmp != null) {
-                    artworkCache.put(targetUrl, bmp)
-                    if (cachedArtworkUrl == targetUrl) {
+            val requestId = artworkRequestId
+            val lastFailure = failedArtwork[targetUrl] ?: 0L
+            val failedRecently = lastFailure > 0L && (System.currentTimeMillis() - lastFailure) < ARTWORK_RETRY_COOLDOWN_MS
+            if (!failedRecently && inFlightArtwork.add(targetUrl)) {
+                android.util.Log.i(TAG, "Fetching artwork for '$title' <- $targetUrl")
+                serviceScope.launch {
+                    val bmp = fetchBitmap(targetUrl)
+                    inFlightArtwork.remove(targetUrl)
+                    if (bmp != null) {
+                        artworkCache.put(targetUrl, bmp)
+                        failedArtwork.remove(targetUrl)
+                    } else {
+                        if (failedArtwork.size > 40) failedArtwork.clear()
+                        failedArtwork[targetUrl] = System.currentTimeMillis()
+                        android.util.Log.w(TAG, "Artwork download failed for $targetUrl")
+                    }
+                    if (bmp != null && cachedArtworkUrl == targetUrl && requestId == artworkRequestId) {
                         cachedArtworkBitmap = bmp
 
                         // Update MediaSession metadata with artwork for Android 11+ System Media Carousel
                         val latestMeta = MediaSessionManager.currentMetadata.value
                         val currentPlaybackState = MediaSessionManager.playbackState.value
                         val currentIsPlaying = currentPlaybackState == BrowserPlaybackState.PLAYING || currentPlaybackState == BrowserPlaybackState.BUFFERING
+                        val currentIsBuffering = currentPlaybackState == BrowserPlaybackState.BUFFERING
+                        val latestTitle = latestMeta?.title ?: title
+                        val latestArtist = latestMeta?.artist ?: artist
+                        val latestAlbum = latestMeta?.album ?: album
+                        val latestDuration = latestMeta?.durationMs ?: durationMs
+                        val latestPosition = MediaSessionManager.currentPositionMs.value
 
-                        val updatedMeta = MediaMetadataCompat.Builder()
-                            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, latestMeta?.title ?: title)
-                            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, latestMeta?.artist ?: artist)
-                            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, latestMeta?.album ?: album)
+                        val updatedMetaBuilder = MediaMetadataCompat.Builder()
+                            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, latestTitle)
+                            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, latestArtist)
+                            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, latestAlbum)
                             .putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
                             .putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
-                            .build()
-                        mediaSession?.setMetadata(updatedMeta)
+                        if (latestDuration > 0L) {
+                            updatedMetaBuilder.putLong(MediaMetadataCompat.METADATA_KEY_DURATION, latestDuration)
+                        }
+                        mediaSession?.setMetadata(updatedMetaBuilder.build())
+                        mediaSession?.setPlaybackState(
+                            buildPlaybackState(currentIsPlaying, currentIsBuffering, latestPosition)
+                        )
 
                         val updatedNotification = buildNotification(
-                            title = latestMeta?.title ?: title,
-                            artist = latestMeta?.artist ?: artist,
-                            album = latestMeta?.album ?: album,
+                            title = latestTitle,
+                            artist = latestArtist,
+                            album = latestAlbum,
                             isPlaying = currentIsPlaying,
                             artwork = bmp
                         )
+                        promoteToForeground(updatedNotification)
                         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                         manager?.notify(NOTIFICATION_ID, updatedNotification)
                     }
                 }
             }
         }
+    }
+
+    /**
+     * Builds the media session playback state. Position and duration are what Android 13+ uses
+     * to render the seek bar in the media notification / lock screen player, so both must be
+     * real values (`PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN` hides the bar entirely).
+     */
+    private fun buildPlaybackState(isPlaying: Boolean, isBuffering: Boolean, positionMs: Long): PlaybackStateCompat {
+        val state = when {
+            isBuffering -> PlaybackStateCompat.STATE_BUFFERING
+            isPlaying -> PlaybackStateCompat.STATE_PLAYING
+            else -> PlaybackStateCompat.STATE_PAUSED
+        }
+        val rate = MediaSessionManager.currentPlaybackRate.value.takeIf { isFinite() && it > 0f } ?: 1f
+        val speed = if (isPlaying || isBuffering) rate else 0f
+        return PlaybackStateCompat.Builder()
+            .setActions(
+                PlaybackStateCompat.ACTION_PLAY or
+                PlaybackStateCompat.ACTION_PAUSE or
+                PlaybackStateCompat.ACTION_PLAY_PAUSE or
+                PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
+                PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackStateCompat.ACTION_STOP or
+                PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_SEEK_FORWARD or
+                PlaybackStateCompat.ACTION_SEEK_BACKWARD or
+                PlaybackStateCompat.ACTION_SET_PLAYBACK_SPEED
+            )
+            .setState(state, positionMs.coerceAtLeast(0L), speed)
+            .build()
+    }
+
+    private fun startProgressTicker() {
+        if (tickerRunning) return
+        tickerRunning = true
+        progressHandler.removeCallbacks(progressTicker)
+        progressHandler.postDelayed(progressTicker, TICKER_INTERVAL_MS)
+    }
+
+    private fun stopProgressTicker() {
+        tickerRunning = false
+        progressHandler.removeCallbacks(progressTicker)
+        lastPushedPositionMs = -1L
+        lastPushedState = -1
+        lastPushedRate = -1f
+    }
+
+    /**
+     * Re-publishes only the playback state (position / rate) of the media session. The system
+     * media controls listen to the session itself, so this updates the seek bar without
+     * rebuilding and re-posting the notification every second.
+     */
+    private fun pushPlaybackStateOnly() {
+        val session = mediaSession ?: return
+        val state = MediaSessionManager.playbackState.value
+        val isPlaying = state == BrowserPlaybackState.PLAYING
+        val isBuffering = state == BrowserPlaybackState.BUFFERING
+        val positionMs = MediaSessionManager.currentPositionMs.value
+        val rate = MediaSessionManager.currentPlaybackRate.value
+        val compatState = when {
+            isBuffering -> PlaybackStateCompat.STATE_BUFFERING
+            isPlaying -> PlaybackStateCompat.STATE_PLAYING
+            else -> PlaybackStateCompat.STATE_PAUSED
+        }
+        if (positionMs == lastPushedPositionMs && compatState == lastPushedState && rate == lastPushedRate) return
+        session.setPlaybackState(buildPlaybackState(isPlaying, isBuffering, positionMs))
+        lastPushedPositionMs = positionMs
+        lastPushedState = compatState
+        lastPushedRate = rate
+    }
+
+    private fun registerNoisyReceiver() {
+        if (noisyReceiverRegistered) return
+        try {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            ContextCompat.registerReceiver(this, noisyReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            noisyReceiverRegistered = true
+        } catch (e: Throwable) {
+            android.util.Log.w(TAG, "Unable to register becoming-noisy receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterNoisyReceiver() {
+        if (!noisyReceiverRegistered) return
+        noisyReceiverRegistered = false
+        try {
+            unregisterReceiver(noisyReceiver)
+        } catch (e: Throwable) { }
+    }
+
+    /**
+     * Requests audio focus for web media playback. Without it other apps' audio keeps mixing
+     * with the video, phone calls do not pause playback and navigation prompts cannot duck it -
+     * Chromium requests focus for exactly the same reasons.
+     */
+    private fun requestAudioFocusIfNeeded() {
+        if (hasAudioFocus) return
+        val manager = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                            .build()
+                    )
+                    // Ducking is handled in the page (see __feather_media_duck) so navigation
+                    // prompts lower the volume instead of pausing the video outright.
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener(audioFocusListener)
+                    .build()
+                    .also { audioFocusRequest = it }
+                hasAudioFocus = manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                hasAudioFocus = manager.requestAudioFocus(
+                    audioFocusListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (e: Throwable) {
+            hasAudioFocus = false
+        }
+        if (!hasAudioFocus) {
+            android.util.Log.w(TAG, "Audio focus request was not granted")
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (!hasAudioFocus) return
+        hasAudioFocus = false
+        val manager = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { manager.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                manager.abandonAudioFocus(audioFocusListener)
+            }
+        } catch (e: Throwable) { }
     }
 
     private fun buildNotification(
@@ -435,15 +769,42 @@ class MediaPlaybackService : Service() {
         }
     }
 
+    /**
+     * Downloads a media thumbnail. YouTube only guarantees `hqdefault.jpg` / `mqdefault.jpg`
+     * for every upload, so the higher quality variants are tried first and the function walks
+     * down to the variants that always exist instead of giving up (which used to leave the
+     * notification without artwork for many videos).
+     */
     private suspend fun fetchBitmap(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = when {
-                urlString.startsWith("//") -> "https:$urlString"
-                urlString.startsWith("/") -> "https://www.youtube.com$urlString"
-                else -> urlString
-            }
-            val url = URL(cleanUrl)
-            val connection = (url.openConnection() as HttpURLConnection).apply {
+        for (candidate in artworkCandidates(urlString)) {
+            val bitmap = downloadBitmap(candidate)
+            if (bitmap != null) return@withContext bitmap
+        }
+        null
+    }
+
+    /** Builds the ordered list of candidate thumbnail URLs for a given artwork URL. */
+    private fun artworkCandidates(urlString: String): List<String> {
+        val cleanUrl = when {
+            urlString.startsWith("//") -> "https:$urlString"
+            urlString.startsWith("/") -> "https://www.youtube.com$urlString"
+            else -> urlString
+        }
+        val match = Regex("^https://i\\.ytimg\\.com/(?:vi|vi_webp)/([A-Za-z0-9_-]{11})/").find(cleanUrl)
+            ?: return listOf(cleanUrl)
+        val videoId = match.groupValues[1]
+        val qualities = listOf("maxresdefault", "sddefault", "hq720", "hqdefault", "mqdefault")
+        val ordered = LinkedHashSet<String>()
+        ordered.add(cleanUrl)
+        qualities.forEach { ordered.add("https://i.ytimg.com/vi/$videoId/$it.jpg") }
+        return ordered.toList()
+    }
+
+    private fun downloadBitmap(urlString: String): Bitmap? {
+        var connection: HttpURLConnection? = null
+        return try {
+            val url = URL(urlString)
+            connection = (url.openConnection() as HttpURLConnection).apply {
                 doInput = true
                 instanceFollowRedirects = true
                 connectTimeout = 4000
@@ -454,28 +815,43 @@ class MediaPlaybackService : Service() {
                 )
             }
             connection.connect()
-            if (connection.responseCode in 200..299) {
-                java.io.BufferedInputStream(connection.inputStream).use { stream ->
-                    val rawBmp = BitmapFactory.decodeStream(stream)
-                    if (rawBmp != null) {
-                        val maxDim = 512
-                        if (rawBmp.width > maxDim || rawBmp.height > maxDim) {
-                            val ratio = rawBmp.width.toFloat() / rawBmp.height.toFloat()
-                            val targetW = if (ratio >= 1f) maxDim else (maxDim * ratio).toInt().coerceAtLeast(1)
-                            val targetH = if (ratio >= 1f) (maxDim / ratio).toInt().coerceAtLeast(1) else maxDim
-                            Bitmap.createScaledBitmap(rawBmp, targetW, targetH, true)
-                        } else {
-                            rawBmp
-                        }
-                    } else {
-                        null
-                    }
-                }
-            } else {
+            if (connection.responseCode !in 200..299) {
                 null
+            } else {
+                java.io.BufferedInputStream(connection.inputStream).use { stream ->
+                    val raw = BitmapFactory.decodeStream(stream)
+                    if (raw == null) null else prepareArtwork(raw)
+                }
             }
         } catch (e: Exception) {
             null
+        } finally {
+            try { connection?.disconnect() } catch (e: Exception) { }
+        }
+    }
+
+    /**
+     * Down-scales the downloaded thumbnail and center-crops it to a square: the media
+     * notification / lock screen player renders artwork 1:1, so a letterboxed 4:3 thumbnail
+     * (hqdefault.jpg) would otherwise show black bars.
+     */
+    private fun prepareArtwork(source: Bitmap): Bitmap {
+        val side = minOf(source.width, source.height)
+        val cropped = if (source.width != source.height) {
+            try {
+                Bitmap.createBitmap(source, (source.width - side) / 2, (source.height - side) / 2, side, side)
+            } catch (e: Exception) {
+                source
+            }
+        } else {
+            source
+        }
+        val maxSide = 512
+        if (cropped.width <= maxSide) return cropped
+        return try {
+            Bitmap.createScaledBitmap(cropped, maxSide, maxSide, true)
+        } catch (e: Exception) {
+            cropped
         }
     }
 
@@ -486,6 +862,7 @@ class MediaPlaybackService : Service() {
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
         if (!(MediaSessionManager.playbackState.value == BrowserPlaybackState.PLAYING || MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING)) {
+            stopProgressTicker()
             MediaSessionManager.stopPlayback(this)
             mediaSession?.setActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -497,6 +874,9 @@ class MediaPlaybackService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopProgressTicker()
+        abandonAudioFocus()
+        unregisterNoisyReceiver()
         mediaSession?.setActive(false)
         mediaSession?.release()
         mediaSession = null

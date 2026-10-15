@@ -8,6 +8,7 @@ import com.example.media.MediaPlaybackService
 import com.example.media.MediaSessionManager
 import com.example.media.BrowserPlaybackState
 import com.example.privacy.FingerprintScriptGenerator
+import com.example.privacy.YouTubeAdBlocker
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -119,6 +120,168 @@ class MediaPlaybackUnitTest {
 
         // Bridge notification callback
         assertTrue("Script must reference FeatherMediaBridge", script.contains("FeatherMediaBridge"))
+    }
+
+    @Test
+    fun mediaSessionManager_tracksPositionAndDurationForTheSystemSeekBar() {
+        val tabId = "tab_yt_progress"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "Ten Minute Video",
+            artist = "Some Channel",
+            album = "YouTube",
+            artworkUrl = "https://i.ytimg.com/vi/abcdefghijk/hq720.jpg",
+            durationMs = 600_000L
+        )
+        MediaSessionManager.updateProgress(context, tabId, 125_000L, 600_000L)
+
+        assertEquals(125_000L, MediaSessionManager.currentPositionMs.value)
+        assertEquals(600_000L, MediaSessionManager.currentMetadata.value?.durationMs)
+        // Seeking keeps the progress in sync even before the page reports it back.
+        MediaSessionManager.seekTo(context, tabId, 300_000L)
+        assertEquals(300_000L, MediaSessionManager.currentPositionMs.value)
+
+        MediaSessionManager.stopPlayback(context)
+        assertEquals(0L, MediaSessionManager.currentPositionMs.value)
+    }
+
+    @Test
+    fun mediaSessionManager_ignoresProgressFromOtherTabs() {
+        val playingTab = "tab_playing"
+        val otherTab = "tab_other"
+        MediaSessionManager.updatePlaybackState(context, playingTab, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(context, playingTab, "Track", "Artist", "YouTube", "")
+        MediaSessionManager.updateProgress(context, playingTab, 42_000L, 100_000L)
+        MediaSessionManager.updateProgress(context, otherTab, 7_000L, 100_000L)
+
+        assertEquals(42_000L, MediaSessionManager.currentPositionMs.value)
+        assertEquals(playingTab, MediaSessionManager.activeMediaTabId.value)
+    }
+
+    @Test
+    fun backgroundPlayScript_reportsPositionAndSupportsSystemSeek() {
+        val script = FingerprintScriptGenerator.generateBackgroundPlayScript()
+
+        // Position / duration reporting for the Android media notification seek bar
+        assertTrue("Script must push progress to the bridge", script.contains("updateProgress"))
+        assertTrue("Script must hook setPositionState", script.contains("setPositionState"))
+        assertTrue("Script must expose a seek entry point", script.contains("window.__feather_media_seek"))
+        assertTrue("Script must forward seeks to YouTube's seekto handler", script.contains("'seekto'"))
+        assertTrue("Script must react to player seeks", script.contains("'seeked'"))
+        assertTrue("Script must publish duration", script.contains("durationchange"))
+
+        // Thumbnail resolution based on the video that is playing right now
+        assertTrue("Script must resolve the live video id", script.contains("getYouTubeVideoId"))
+        assertTrue("Script must be able to rebuild a fresh thumbnail URL", script.contains("hq720.jpg"))
+        assertTrue("Script must map media session artwork back to a video id", script.contains("vi_webp"))
+    }
+
+    @Test
+    fun youTubeAdBlockScript_neverTouchesPlaybackDuringUserSeeking() {
+        val script = YouTubeAdBlocker.getYouTubeAdBlockScript()
+
+        // Ads are only acted upon when the player itself reports an ad
+        assertTrue("Script must detect real ads", script.contains("ad-showing"))
+        assertTrue("Script must guard against scrubbing", script.contains("isUserScrubbing"))
+        assertTrue("Script must restore muted/playbackRate after an ad", script.contains("restoreAdPlayback"))
+        assertTrue("Script must not fast-forward while the user seeks", script.contains("video.seeking"))
+
+        // The loose overlay match and the document-wide observer that stalled the player
+        // (and made in-player seek previews freeze) must stay gone.
+        assertFalse(
+            "Loose ad overlay detection must be removed",
+            script.contains(".ad-showing, .ad-interrupting, .ytp-ad-player-overlay")
+        )
+        assertFalse(
+            "Document-wide class observer must be removed",
+            script.contains("subtree: true, attributes: true, attributeFilter: ['class']")
+        )
+    }
+
+    @Test
+    fun mediaSessionManager_skipsByFixedStepsAndClampsToTheVideo() {
+        val tabId = "tab_yt_skip"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "Skip Test",
+            artist = "Channel",
+            album = "YouTube",
+            artworkUrl = "",
+            durationMs = 60_000L
+        )
+        MediaSessionManager.updateProgress(context, tabId, 30_000L, 60_000L)
+
+        // 10 second rewind / fast forward, exactly like the system media player's buttons
+        MediaSessionManager.seekBy(context, tabId, 10.0)
+        assertEquals(40_000L, MediaSessionManager.currentPositionMs.value)
+
+        MediaSessionManager.seekBy(context, tabId, -10.0)
+        assertEquals(30_000L, MediaSessionManager.currentPositionMs.value)
+
+        // Clamped at both ends of the video
+        MediaSessionManager.seekBy(context, tabId, -600.0)
+        assertEquals(0L, MediaSessionManager.currentPositionMs.value)
+
+        MediaSessionManager.seekBy(context, tabId, 600.0)
+        assertEquals(60_000L, MediaSessionManager.currentPositionMs.value)
+
+        // Another tab must not be able to move the active media session
+        MediaSessionManager.seekBy(context, "tab_other", 10.0)
+        assertEquals(60_000L, MediaSessionManager.currentPositionMs.value)
+    }
+
+    @Test
+    fun mediaSessionManager_tracksAndResetsPlaybackRate() {
+        val tabId = "tab_yt_rate"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(context, tabId, "Rate Test", "Channel", "YouTube", "")
+
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.updatePlaybackRate(context, tabId, 1.5f)
+        assertEquals(1.5f, MediaSessionManager.currentPlaybackRate.value)
+
+        // Garbage rates from the page are ignored, real ones are applied
+        MediaSessionManager.updatePlaybackRate(context, tabId, -2f)
+        assertEquals(1.5f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.setPlaybackRate(context, 2f)
+        assertEquals(2f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.setPlaybackRate(context, 0f)
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.stopPlayback(context)
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+    }
+
+    @Test
+    fun backgroundPlayScript_exposesSystemMediaPlayerControls() {
+        val script = FingerprintScriptGenerator.generateBackgroundPlayScript()
+
+        // 10 second skip buttons (notification / lock screen / headset), same step as Chromium
+        assertTrue("Script must expose a relative seek entry point", script.contains("window.__feather_media_seek_by"))
+        assertTrue("Relative seek must clamp at the end of the video", script.contains("Math.min(target, Math.max(0, duration - 1))"))
+
+        // Playback speed control
+        assertTrue("Script must expose a playback speed entry point", script.contains("window.__feather_media_set_rate"))
+        assertTrue("Playback speed must respect YouTube's supported rates", script.contains("getAvailablePlaybackRates"))
+
+        // Audio focus ducking
+        assertTrue("Script must expose volume ducking", script.contains("window.__feather_media_duck"))
+
+        // Playback rate reporting for the system media player's speed chip
+        assertTrue("Script must report rate changes", script.contains("ratechange"))
+        assertTrue("Script must push the rate to the bridge", script.contains("updatePlaybackRate"))
+    }
+
+    @Test
+    fun mediaPlaybackService_mediaTabExtraIsDefined() {
+        assertEquals("com.example.media.EXTRA_MEDIA_TAB_ID", MediaPlaybackService.EXTRA_MEDIA_TAB_ID)
     }
 
     @Test
