@@ -1,8 +1,13 @@
 package com.example.media
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -13,6 +18,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import com.example.MainActivity
 import com.example.R
@@ -37,6 +43,13 @@ class MediaPlaybackService : Service() {
 
         /** How long a failed artwork download is remembered before it is retried. */
         private const val ARTWORK_RETRY_COOLDOWN_MS = 60_000L
+
+        /** Skip step used by the system media player's rewind / fast forward buttons. */
+        private const val SKIP_STEP_SECONDS = 10.0
+
+        /** Extra carrying the tab that owns the media session, so tapping the notification
+         *  brings the user back to the page that is actually playing. */
+        const val EXTRA_MEDIA_TAB_ID = "com.example.media.EXTRA_MEDIA_TAB_ID"
 
         const val ACTION_UPDATE_STATE = "com.example.media.UPDATE_STATE"
         const val ACTION_PLAY = "com.example.media.PLAY"
@@ -116,6 +129,7 @@ class MediaPlaybackService : Service() {
     private val progressHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private var lastPushedPositionMs = -1L
     private var lastPushedState = -1
+    private var lastPushedRate = -1f
     private var tickerRunning = false
     private val progressTicker = object : Runnable {
         override fun run() {
@@ -136,9 +150,76 @@ class MediaPlaybackService : Service() {
     // does not promote an empty service to foreground and briefly post a phantom notification.
     private var pendingStop = false
 
+    // --- Audio focus handling (what Chromium does through its AudioFocusManager) -------------
+    private val audioManager: AudioManager? by lazy {
+        try { getSystemService(Context.AUDIO_SERVICE) as? AudioManager } catch (e: Throwable) { null }
+    }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var hasAudioFocus = false
+    private var resumeOnFocusGain = false
+
+    /** Pauses playback in the page and immediately reflects it in the notification. */
+    private fun pauseForAudioFocus() {
+        try {
+            MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
+            updateNotificationAndSession()
+        } catch (e: Throwable) { }
+    }
+
+    /** Resumes playback in the page and immediately reflects it in the notification. */
+    private fun resumeForAudioFocus() {
+        try {
+            resumeOnFocusGain = false
+            MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
+            updateNotificationAndSession()
+        } catch (e: Throwable) { }
+    }
+
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        try {
+            when (change) {
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    MediaSessionManager.duckMedia(this, false)
+                    val otherAppPlaying = try { audioManager?.isMusicActive == true } catch (e: Throwable) { false }
+                    if (resumeOnFocusGain && !otherAppPlaying) {
+                        resumeForAudioFocus()
+                    } else if (otherAppPlaying) {
+                        // Another app took over the speakers; do not fight it for audio.
+                        resumeOnFocusGain = false
+                    }
+                }
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    resumeOnFocusGain = false
+                    abandonAudioFocus()
+                    pauseForAudioFocus()
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    // Phone call, alarm, navigation prompt: pause and resume afterwards.
+                    resumeOnFocusGain = true
+                    pauseForAudioFocus()
+                }
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    MediaSessionManager.duckMedia(this, true)
+                }
+            }
+        } catch (e: Throwable) { }
+    }
+
+    // Headphones unplugged: Chromium pauses media, and so do we.
+    private val noisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) {
+                android.util.Log.i(TAG, "ACTION_AUDIO_BECOMING_NOISY -> pausing playback")
+                pauseForAudioFocus()
+            }
+        }
+    }
+    private var noisyReceiverRegistered = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel(this)
+        registerNoisyReceiver()
         setupMediaSession()
 
         val metadata = MediaSessionManager.currentMetadata.value
@@ -169,6 +250,22 @@ class MediaPlaybackService : Service() {
         promoteToForeground(initialNotification)
     }
 
+    /** PendingIntent that reopens the browser on the tab which is playing media. */
+    private fun buildSessionActivityIntent(tabId: String): PendingIntent {
+        val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (tabId.isNotBlank()) {
+                putExtra(EXTRA_MEDIA_TAB_ID, tabId)
+            }
+        }
+        return PendingIntent.getActivity(
+            this,
+            0,
+            openAppIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun setupMediaSession() {
         val session = MediaSessionCompat(this, "FeatherMediaSession")
         session.setFlags(
@@ -176,16 +273,7 @@ class MediaPlaybackService : Service() {
             MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
         )
 
-        val openAppIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val sessionActivityIntent = PendingIntent.getActivity(
-            this,
-            0,
-            openAppIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        session.setSessionActivity(sessionActivityIntent)
+        session.setSessionActivity(buildSessionActivityIntent(MediaSessionManager.activeMediaTabId.value ?: ""))
 
         session.setCallback(object : MediaSessionCompat.Callback() {
             override fun onPlay() {
@@ -218,6 +306,20 @@ class MediaPlaybackService : Service() {
                 val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
                 MediaSessionManager.seekTo(this@MediaPlaybackService, tabId, pos)
             }
+
+            override fun onSeekForward() {
+                val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
+                MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, SKIP_STEP_SECONDS)
+            }
+
+            override fun onSeekBackward() {
+                val tabId = MediaSessionManager.activeMediaTabId.value ?: ""
+                MediaSessionManager.seekBy(this@MediaPlaybackService, tabId, -SKIP_STEP_SECONDS)
+            }
+
+            override fun onSetPlaybackSpeed(speed: Float) {
+                MediaSessionManager.setPlaybackRate(this@MediaPlaybackService, speed)
+            }
         })
 
         session.isActive = true
@@ -236,6 +338,7 @@ class MediaPlaybackService : Service() {
             ACTION_PREV -> MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
             ACTION_STOP -> {
                 stopProgressTicker()
+                abandonAudioFocus()
                 MediaSessionManager.stopPlayback(this)
                 mediaSession?.setActive(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -277,6 +380,7 @@ class MediaPlaybackService : Service() {
 
         if (metadata == null && !isPlaying) {
             stopProgressTicker()
+            abandonAudioFocus()
             mediaSession?.setActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -318,9 +422,16 @@ class MediaPlaybackService : Service() {
         mediaSession?.isActive = true
         lastPushedPositionMs = positionMs
         lastPushedState = playbackState.state
+        lastPushedRate = MediaSessionManager.currentPlaybackRate.value
 
-        // Keep the position flowing between the once-per-second reports from the page.
-        if (isPlaying) startProgressTicker()
+        // Keep the position flowing between the once-per-second reports from the page, and
+        // hold audio focus exactly while media is playing.
+        if (isPlaying) {
+            requestAudioFocusIfNeeded()
+            startProgressTicker()
+        } else {
+            abandonAudioFocus()
+        }
 
         val metaBuilder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
@@ -335,6 +446,10 @@ class MediaPlaybackService : Service() {
             metaBuilder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, cachedArtworkBitmap)
         }
         mediaSession?.setMetadata(metaBuilder.build())
+
+        // Tapping the notification / lock screen player returns to the tab that owns the
+        // media session instead of whatever tab was open last.
+        mediaSession?.setSessionActivity(buildSessionActivityIntent(metadata?.tabId ?: ""))
 
         val notification = buildNotification(title, artist, album, isPlaying, cachedArtworkBitmap)
         promoteToForeground(notification)
@@ -418,6 +533,8 @@ class MediaPlaybackService : Service() {
             isPlaying -> PlaybackStateCompat.STATE_PLAYING
             else -> PlaybackStateCompat.STATE_PAUSED
         }
+        val rate = MediaSessionManager.currentPlaybackRate.value.takeIf { isFinite() && it > 0f } ?: 1f
+        val speed = if (isPlaying || isBuffering) rate else 0f
         return PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
@@ -426,9 +543,12 @@ class MediaPlaybackService : Service() {
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_STOP or
-                PlaybackStateCompat.ACTION_SEEK_TO
+                PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_SEEK_FORWARD or
+                PlaybackStateCompat.ACTION_SEEK_BACKWARD or
+                PlaybackStateCompat.ACTION_SET_PLAYBACK_SPEED
             )
-            .setState(state, positionMs.coerceAtLeast(0L), if (isPlaying && !isBuffering) 1.0f else 0.0f)
+            .setState(state, positionMs.coerceAtLeast(0L), speed)
             .build()
     }
 
@@ -444,6 +564,7 @@ class MediaPlaybackService : Service() {
         progressHandler.removeCallbacks(progressTicker)
         lastPushedPositionMs = -1L
         lastPushedState = -1
+        lastPushedRate = -1f
     }
 
     /**
@@ -457,15 +578,90 @@ class MediaPlaybackService : Service() {
         val isPlaying = state == BrowserPlaybackState.PLAYING
         val isBuffering = state == BrowserPlaybackState.BUFFERING
         val positionMs = MediaSessionManager.currentPositionMs.value
+        val rate = MediaSessionManager.currentPlaybackRate.value
         val compatState = when {
             isBuffering -> PlaybackStateCompat.STATE_BUFFERING
             isPlaying -> PlaybackStateCompat.STATE_PLAYING
             else -> PlaybackStateCompat.STATE_PAUSED
         }
-        if (positionMs == lastPushedPositionMs && compatState == lastPushedState) return
+        if (positionMs == lastPushedPositionMs && compatState == lastPushedState && rate == lastPushedRate) return
         session.setPlaybackState(buildPlaybackState(isPlaying, isBuffering, positionMs))
         lastPushedPositionMs = positionMs
         lastPushedState = compatState
+        lastPushedRate = rate
+    }
+
+    private fun registerNoisyReceiver() {
+        if (noisyReceiverRegistered) return
+        try {
+            val filter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
+            ContextCompat.registerReceiver(this, noisyReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            noisyReceiverRegistered = true
+        } catch (e: Throwable) {
+            android.util.Log.w(TAG, "Unable to register becoming-noisy receiver: ${e.message}")
+        }
+    }
+
+    private fun unregisterNoisyReceiver() {
+        if (!noisyReceiverRegistered) return
+        noisyReceiverRegistered = false
+        try {
+            unregisterReceiver(noisyReceiver)
+        } catch (e: Throwable) { }
+    }
+
+    /**
+     * Requests audio focus for web media playback. Without it other apps' audio keeps mixing
+     * with the video, phone calls do not pause playback and navigation prompts cannot duck it -
+     * Chromium requests focus for exactly the same reasons.
+     */
+    private fun requestAudioFocusIfNeeded() {
+        if (hasAudioFocus) return
+        val manager = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
+                            .build()
+                    )
+                    // Ducking is handled in the page (see __feather_media_duck) so navigation
+                    // prompts lower the volume instead of pausing the video outright.
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener(audioFocusListener)
+                    .build()
+                    .also { audioFocusRequest = it }
+                hasAudioFocus = manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                hasAudioFocus = manager.requestAudioFocus(
+                    audioFocusListener,
+                    AudioManager.STREAM_MUSIC,
+                    AudioManager.AUDIOFOCUS_GAIN
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        } catch (e: Throwable) {
+            hasAudioFocus = false
+        }
+        if (!hasAudioFocus) {
+            android.util.Log.w(TAG, "Audio focus request was not granted")
+        }
+    }
+
+    private fun abandonAudioFocus() {
+        if (!hasAudioFocus) return
+        hasAudioFocus = false
+        val manager = audioManager ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { manager.abandonAudioFocusRequest(it) }
+            } else {
+                @Suppress("DEPRECATION")
+                manager.abandonAudioFocus(audioFocusListener)
+            }
+        } catch (e: Throwable) { }
     }
 
     private fun buildNotification(
@@ -679,6 +875,8 @@ class MediaPlaybackService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopProgressTicker()
+        abandonAudioFocus()
+        unregisterNoisyReceiver()
         mediaSession?.setActive(false)
         mediaSession?.release()
         mediaSession = null

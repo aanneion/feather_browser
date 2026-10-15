@@ -257,6 +257,13 @@ class FeatherMediaBridge(
     }
 
     @JavascriptInterface
+    fun updatePlaybackRate(rate: Double) {
+        try {
+            MediaSessionManager.updatePlaybackRate(context, tabId, rate.toFloat())
+        } catch (e: Throwable) { }
+    }
+
+    @JavascriptInterface
     fun onMediaPlaying(title: String, artist: String) {
         try {
             MediaSessionManager.updateMetadata(context, tabId, title, artist)

@@ -116,5 +116,13 @@ class MainActivity : ComponentActivity() {
             viewModel.navigateTo(data)
             intent.data = null
         }
+
+        // Tapping the media notification / lock screen player should land on the tab that is
+        // playing, not on whatever tab happened to be active last.
+        val mediaTabId = intent?.getStringExtra(com.example.media.MediaPlaybackService.EXTRA_MEDIA_TAB_ID)
+        if (!mediaTabId.isNullOrBlank()) {
+            intent.removeExtra(com.example.media.MediaPlaybackService.EXTRA_MEDIA_TAB_ID)
+            viewModel.openMediaTab(mediaTabId)
+        }
     }
 }

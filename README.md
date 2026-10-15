@@ -79,9 +79,9 @@ Feather keeps tabs, bookmarks, history, downloads, and shortcuts organized by pr
 
 ## ✨ Feature Highlights
 
-- 🎵 **YouTube & Background Media Playback**: Continue playing audio from YouTube and web media seamlessly in the background when switching tabs, minimizing the browser, or locking the device.
+- 🎵 **YouTube & Background Media Playback**: Continue playing audio from YouTube and web media seamlessly in the background when switching tabs, minimizing the browser, or locking the device, with an audible-tab indicator in the tab manager and correct hand-off between tabs.
 - 📱 **Immersive Full-Screen Web Browsing**: Dynamic auto-hiding top URL bar and bottom navigation dock that glide away when scrolling down and smoothly return when scrolling up.
-- 📱 **Lock Screen & Notification Player Controls**: Full Android `MediaSession` integration providing lock screen playback controls, live video title, channel and thumbnail artwork that follow every video change, a seek bar synced with the YouTube progress bar, and seeking straight from the notification, lock screen, or headset.
+- 📱 **Lock Screen & Notification Player Controls**: Full Android `MediaSession` integration providing lock screen playback controls, live video title, channel and thumbnail artwork that follow every video change, a seek bar synced with the YouTube progress bar, 10-second skip buttons, playback speed control, seeking straight from the notification, lock screen, or headset, and audio focus handling so calls, alarms and navigation prompts pause or duck playback like in Chromium based browsers.
 - 🛡️ **Enhanced YouTube & Web Ad Blocker**: Dual-layer blocking engine combining fast network URL interception with client-side DOM cleansing to block YouTube video ads, banner promos, pop-ups, and trackers without battery overhead.
 - 🎨 **Material You Dynamic Theming**: Adapts seamlessly to your device's Android 12+ wallpaper colors, with Light, Dark, and true Pitch-Black (`#000000`) AMOLED modes.
 - 👥 **Organized Profiles**: Separate tabs, history, bookmarks, downloads, and shortcuts; WebView site storage remains shared by Android.

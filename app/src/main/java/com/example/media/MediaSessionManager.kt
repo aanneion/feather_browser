@@ -54,6 +54,10 @@ object MediaSessionManager {
     private val _currentPositionMs = MutableStateFlow(0L)
     val currentPositionMs = _currentPositionMs.asStateFlow()
 
+    /** Playback speed reported by the page, surfaced in the system media player. */
+    private val _currentPlaybackRate = MutableStateFlow(1f)
+    val currentPlaybackRate = _currentPlaybackRate.asStateFlow()
+
     private val _controlActions = MutableSharedFlow<MediaControlAction>(extraBufferCapacity = 16)
     val controlActions = _controlActions.asSharedFlow()
 
@@ -159,6 +163,23 @@ object MediaSessionManager {
         }
     }
 
+    /**
+     * Runs [script] on the WebView that owns the media session (falling back to any live
+     * WebView) on the main thread, so controls keep working while the app is in the
+     * background.
+     */
+    private fun evaluateOnMediaWebView(tabId: String?, script: String) {
+        val targetTabId = tabId?.takeIf { it.isNotBlank() } ?: _activeMediaTabId.value
+        val webView = targetTabId?.let { webViewRegistry[it]?.get() }
+            ?: webViewRegistry.values.firstNotNullOfOrNull { it.get() }
+            ?: return
+        webView.post {
+            try {
+                webView.evaluateJavascript(script, null)
+            } catch (e: Throwable) { }
+        }
+    }
+
     fun dispatchAction(action: MediaControlAction) {
         when (action) {
             MediaControlAction.PLAY -> _playbackState.value = BrowserPlaybackState.PLAYING
@@ -222,13 +243,14 @@ object MediaSessionManager {
         _currentMetadata.value = null
         _activeMediaTabId.value = null
         _currentPositionMs.value = 0L
+        _currentPlaybackRate.value = 1f
         isServiceActive = false
         stopService(context)
     }
 
+    /** Refreshes the media notification / lock screen player with the current state. */
     fun refreshNotification(context: Context) {
-        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
-        if (isActive && _currentMetadata.value != null) {
+        if (_currentMetadata.value != null) {
             startOrUpdateService(context)
         }
     }
@@ -238,7 +260,8 @@ object MediaSessionManager {
         val meta = _currentMetadata.value
         return "state=${_playbackState.value} tab=${_activeMediaTabId.value ?: "-"} " +
             "title='${meta?.title ?: "-"}' artwork=${!meta?.artworkUrl.isNullOrBlank()} " +
-            "duration=${meta?.durationMs ?: 0} position=${_currentPositionMs.value} serviceActive=$isServiceActive"
+            "duration=${meta?.durationMs ?: 0} position=${_currentPositionMs.value} " +
+            "rate=${_currentPlaybackRate.value} serviceActive=$isServiceActive"
     }
 
     fun updateProgress(context: Context, tabId: String, positionMs: Long, durationMs: Long) {
@@ -283,23 +306,66 @@ object MediaSessionManager {
         if (positionMs >= 0) {
             _currentPositionMs.value = positionMs
         }
-        val targetTabId = tabId.takeIf { it.isNotBlank() } ?: _activeMediaTabId.value
-        val webView = targetTabId?.let { webViewRegistry[it]?.get() }
-            ?: webViewRegistry.values.firstNotNullOfOrNull { it.get() }
-        if (webView != null) {
-            webView.post {
-                try {
-                    webView.evaluateJavascript(
-                        "if (window.__feather_media_seek) window.__feather_media_seek($positionMs);",
-                        null
-                    )
-                } catch (e: Throwable) { }
-            }
-        }
+        evaluateOnMediaWebView(
+            tabId,
+            "if (window.__feather_media_seek) window.__feather_media_seek($positionMs);"
+        )
         val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
         if (isServiceActive || isActive) {
             startOrUpdateService(context)
         }
+    }
+
+    /**
+     * Relative seek for the system media player's skip buttons (the same 10 second steps
+     * Chromium based browsers expose). The reported position is moved optimistically so the
+     * seek bar follows the button press immediately.
+     */
+    fun seekBy(context: Context, tabId: String, deltaSeconds: Double) {
+        if (_activeMediaTabId.value != null && _activeMediaTabId.value != tabId) return
+        val deltaMs = (deltaSeconds * 1000.0).toLong()
+        val durationMs = _currentMetadata.value?.durationMs ?: 0L
+        var target = _currentPositionMs.value + deltaMs
+        if (target < 0L) target = 0L
+        if (durationMs > 0L && target > durationMs) target = durationMs
+        _currentPositionMs.value = target
+        evaluateOnMediaWebView(
+            tabId,
+            "if (window.__feather_media_seek_by) window.__feather_media_seek_by($deltaSeconds);"
+        )
+        val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
+        if (isServiceActive || isActive) {
+            startOrUpdateService(context)
+        }
+    }
+
+    /** Playback speed reported by the page (used for the system media player's speed chip). */
+    fun updatePlaybackRate(context: Context, tabId: String, rate: Float) {
+        if (_activeMediaTabId.value != null && _activeMediaTabId.value != tabId) return
+        if (rate > 0f && rate.isFinite()) {
+            _currentPlaybackRate.value = rate
+        }
+    }
+
+    /** Applies a new playback speed from the system media player. */
+    fun setPlaybackRate(context: Context, rate: Float) {
+        val value = if (rate > 0f && rate.isFinite()) rate else 1f
+        _currentPlaybackRate.value = value
+        evaluateOnMediaWebView(
+            _activeMediaTabId.value,
+            "if (window.__feather_media_set_rate) window.__feather_media_set_rate($value);"
+        )
+        if (isServiceActive) {
+            startOrUpdateService(context)
+        }
+    }
+
+    /** Ducks (or restores) the page volume while another app temporarily owns audio focus. */
+    fun duckMedia(context: Context, duck: Boolean) {
+        evaluateOnMediaWebView(
+            _activeMediaTabId.value,
+            "if (window.__feather_media_duck) window.__feather_media_duck($duck);"
+        )
     }
 
     private fun startOrUpdateService(context: Context) {

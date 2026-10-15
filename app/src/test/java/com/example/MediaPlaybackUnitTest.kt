@@ -201,6 +201,90 @@ class MediaPlaybackUnitTest {
     }
 
     @Test
+    fun mediaSessionManager_skipsByFixedStepsAndClampsToTheVideo() {
+        val tabId = "tab_yt_skip"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "Skip Test",
+            artist = "Channel",
+            album = "YouTube",
+            artworkUrl = "",
+            durationMs = 60_000L
+        )
+        MediaSessionManager.updateProgress(context, tabId, 30_000L, 60_000L)
+
+        // 10 second rewind / fast forward, exactly like the system media player's buttons
+        MediaSessionManager.seekBy(context, tabId, 10.0)
+        assertEquals(40_000L, MediaSessionManager.currentPositionMs.value)
+
+        MediaSessionManager.seekBy(context, tabId, -10.0)
+        assertEquals(30_000L, MediaSessionManager.currentPositionMs.value)
+
+        // Clamped at both ends of the video
+        MediaSessionManager.seekBy(context, tabId, -600.0)
+        assertEquals(0L, MediaSessionManager.currentPositionMs.value)
+
+        MediaSessionManager.seekBy(context, tabId, 600.0)
+        assertEquals(60_000L, MediaSessionManager.currentPositionMs.value)
+
+        // Another tab must not be able to move the active media session
+        MediaSessionManager.seekBy(context, "tab_other", 10.0)
+        assertEquals(60_000L, MediaSessionManager.currentPositionMs.value)
+    }
+
+    @Test
+    fun mediaSessionManager_tracksAndResetsPlaybackRate() {
+        val tabId = "tab_yt_rate"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(context, tabId, "Rate Test", "Channel", "YouTube", "")
+
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.updatePlaybackRate(context, tabId, 1.5f)
+        assertEquals(1.5f, MediaSessionManager.currentPlaybackRate.value)
+
+        // Garbage rates from the page are ignored, real ones are applied
+        MediaSessionManager.updatePlaybackRate(context, tabId, -2f)
+        assertEquals(1.5f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.setPlaybackRate(context, 2f)
+        assertEquals(2f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.setPlaybackRate(context, 0f)
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+
+        MediaSessionManager.stopPlayback(context)
+        assertEquals(1f, MediaSessionManager.currentPlaybackRate.value)
+    }
+
+    @Test
+    fun backgroundPlayScript_exposesSystemMediaPlayerControls() {
+        val script = FingerprintScriptGenerator.generateBackgroundPlayScript()
+
+        // 10 second skip buttons (notification / lock screen / headset), same step as Chromium
+        assertTrue("Script must expose a relative seek entry point", script.contains("window.__feather_media_seek_by"))
+        assertTrue("Relative seek must clamp at the end of the video", script.contains("Math.min(target, Math.max(0, duration - 1))"))
+
+        // Playback speed control
+        assertTrue("Script must expose a playback speed entry point", script.contains("window.__feather_media_set_rate"))
+        assertTrue("Playback speed must respect YouTube's supported rates", script.contains("getAvailablePlaybackRates"))
+
+        // Audio focus ducking
+        assertTrue("Script must expose volume ducking", script.contains("window.__feather_media_duck"))
+
+        // Playback rate reporting for the system media player's speed chip
+        assertTrue("Script must report rate changes", script.contains("ratechange"))
+        assertTrue("Script must push the rate to the bridge", script.contains("updatePlaybackRate"))
+    }
+
+    @Test
+    fun mediaPlaybackService_mediaTabExtraIsDefined() {
+        assertEquals("com.example.media.EXTRA_MEDIA_TAB_ID", MediaPlaybackService.EXTRA_MEDIA_TAB_ID)
+    }
+
+    @Test
     fun mediaPlaybackService_constantsAndIntentActionsAreDefined() {
         assertEquals("feather_media_playback_channel_v4", MediaPlaybackService.CHANNEL_ID)
         assertEquals(2001, MediaPlaybackService.NOTIFICATION_ID)

@@ -600,6 +600,70 @@ object FingerprintScriptGenerator {
                     scheduleTrackChecks();
                 };
 
+                /**
+                 * Relative seek used by the notification / lock screen / headset skip buttons
+                 * (Chromium exposes the same 10 second steps).
+                 */
+                window.__feather_media_seek_by = function(deltaSeconds) {
+                    const delta = (typeof deltaSeconds === 'number' && isFinite(deltaSeconds)) ? deltaSeconds : 0;
+                    const media = getActiveMedia();
+                    let current = -1;
+                    let duration = 0;
+                    if (media) {
+                        if (typeof media.currentTime === 'number' && isFinite(media.currentTime) && media.currentTime >= 0) current = media.currentTime;
+                        if (typeof media.duration === 'number' && isFinite(media.duration) && media.duration > 0) duration = media.duration;
+                    }
+                    if (current < 0 && positionFromSession) current = positionFromSession.position;
+                    if (duration <= 0 && positionFromSession) duration = positionFromSession.duration;
+                    if (current < 0) return;
+                    let target = current + delta;
+                    if (target < 0) target = 0;
+                    if (duration > 0) target = Math.min(target, Math.max(0, duration - 1));
+                    window.__feather_media_seek(Math.round(target * 1000));
+                };
+
+                /**
+                 * Playback speed, mirroring the playback speed control the system media player
+                 * offers for Chromium based browsers.
+                 */
+                window.__feather_media_set_rate = function(rate) {
+                    const value = (typeof rate === 'number' && isFinite(rate) && rate > 0) ? rate : 1;
+                    try {
+                        const moviePlayer = document.getElementById('movie_player');
+                        if (moviePlayer && typeof moviePlayer.setPlaybackRate === 'function') {
+                            if (typeof moviePlayer.getAvailablePlaybackRates === 'function') {
+                                const available = moviePlayer.getAvailablePlaybackRates() || [];
+                                if (available.indexOf(value) === -1) return;
+                            }
+                            moviePlayer.setPlaybackRate(value);
+                            return;
+                        }
+                    } catch(e) {}
+                    try {
+                        getMediaElements().forEach(function(m) { m.playbackRate = value; });
+                    } catch(e) {}
+                };
+
+                /**
+                 * Temporary volume ducking (navigation prompts, alarms) - what Chromium does with
+                 * audio focus instead of pausing playback outright.
+                 */
+                window.__feather_media_duck = function(duck) {
+                    try {
+                        getMediaElements().forEach(function(m) {
+                            if (duck) {
+                                if (typeof m.__feather_saved_volume !== 'number') {
+                                    m.__feather_saved_volume = (typeof m.volume === 'number') ? m.volume : 1;
+                                }
+                                m.volume = Math.max(0, Math.min(1, m.__feather_saved_volume * 0.2));
+                            } else if (typeof m.__feather_saved_volume === 'number') {
+                                m.volume = m.__feather_saved_volume;
+                                delete m.__feather_saved_volume;
+                            }
+                        });
+                    } catch(e) {}
+                };
+
                 window.__feather_media_next = function() {
                     try {
                         if (window.__feather_actions && typeof window.__feather_actions['nexttrack'] === 'function') {
@@ -652,8 +716,18 @@ object FingerprintScriptGenerator {
                         notifyMediaBridge(true);
                     }
 
+                    function reportRate() {
+                        try {
+                            if (window.FeatherMediaBridge && typeof window.FeatherMediaBridge.updatePlaybackRate === 'function') {
+                                window.FeatherMediaBridge.updatePlaybackRate(el.playbackRate);
+                            }
+                        } catch(e) {}
+                    }
+
                     el.addEventListener('play', handlePlay);
                     el.addEventListener('playing', handlePlay);
+                    el.addEventListener('ratechange', reportRate);
+                    reportRate();
                     el.addEventListener('loadedmetadata', function() { publishPosition(true); });
                     el.addEventListener('durationchange', function() { publishPosition(true); });
                     el.addEventListener('seeked', function() {

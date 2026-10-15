@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **🎧 Chromium-Style Media Session Features for Background Playback**: the media notification / lock screen player now behaves like a full media app, matching what Chromium based browsers expose to the system.
+  - **Audio focus**: playback takes Android audio focus while media plays, so phone calls, alarms and navigation prompts pause the video and resume it afterwards, prompts that only need to be heard duck the volume instead of stopping playback, and unplugging headphones pauses media (`ACTION_AUDIO_BECOMING_NOISY`) — same behaviour as Chromium's audio focus manager.
+  - **Skip buttons**: the system media player's rewind / fast forward buttons move the video by 10 seconds at a time, clamped to the start and end of the video.
+  - **Playback speed**: the notification advertises playback speed support and reports the real speed, so changing speed in YouTube is reflected in the system player and the player's speed control drives the video.
+  - **Open the playing tab**: tapping the notification / lock screen player now returns to the tab that owns the media session instead of whatever tab was open last (tabs from another profile are ignored).
+  - **Audible tab indicator**: the tab manager marks the tab that is currently playing media, so background audio can be traced at a glance.
+
 ### Fixed
 - **🖼️ Media Notification Thumbnail Now Follows the Video Being Played**:
   - The lock screen / notification artwork is resolved from the video that is playing right now instead of whatever metadata YouTube left behind: the session artwork is validated against the live video id, and a fresh thumbnail URL is built from that id whenever it cannot be matched.

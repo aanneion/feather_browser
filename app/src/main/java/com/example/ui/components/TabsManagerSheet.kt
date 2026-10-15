@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.browser.UrlUtils
 import com.example.data.model.BrowserProfile
 import com.example.data.model.BrowserTab
@@ -55,6 +56,13 @@ fun TabsManagerScreen(
     profiles: List<BrowserProfile> = emptyList(),
     onSelectProfile: ((String) -> Unit)? = null
 ) {
+    // Chromium shows an equalizer badge on the tab that is producing sound; the same
+    // indicator is rendered on the tab card so the audible tab can be told apart at a glance.
+    val mediaTabId by com.example.media.MediaSessionManager.activeMediaTabId.collectAsStateWithLifecycle()
+    val playbackState by com.example.media.MediaSessionManager.playbackState.collectAsStateWithLifecycle()
+    val isMediaPlaying = playbackState == com.example.media.BrowserPlaybackState.PLAYING ||
+        playbackState == com.example.media.BrowserPlaybackState.BUFFERING
+
     val profileColor = if (isPrivateMode) Color(0xFF9333EA) else {
         try {
             Color(android.graphics.Color.parseColor(currentProfile?.colorHex ?: "#3B82F6"))
@@ -280,6 +288,7 @@ fun TabsManagerScreen(
                                 tab = tab,
                                 isActive = isActive,
                                 profileColor = profileColor,
+                                isPlayingMedia = isMediaPlaying && tab.id == mediaTabId,
                                 onClick = { onSelectTab(tab.id) },
                                 onClose = { onCloseTab(tab.id) }
                             )
@@ -395,7 +404,8 @@ fun DownsideTabCard(
     isActive: Boolean,
     profileColor: Color,
     onClick: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    isPlayingMedia: Boolean = false
 ) {
     val isHome = tab.url.isBlank() || tab.url == "about:blank"
     val domain = if (isHome) "Home" else UrlUtils.extractDomain(tab.url)
@@ -514,6 +524,19 @@ fun DownsideTabCard(
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
+
+                    // Playing media indicator (background audio/video)
+                    if (isPlayingMedia) {
+                        Icon(
+                            imageVector = Icons.Default.GraphicEq,
+                            contentDescription = "Playing media",
+                            tint = profileColor,
+                            modifier = Modifier
+                                .size(15.dp)
+                                .testTag("tab_media_indicator_${tab.id}")
+                        )
+                        Spacer(modifier = Modifier.width(5.dp))
+                    }
 
                     // Title
                     Text(
