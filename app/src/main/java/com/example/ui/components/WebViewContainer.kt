@@ -250,6 +250,13 @@ class FeatherMediaBridge(
     }
 
     @JavascriptInterface
+    fun updateProgress(positionMs: Long, durationMs: Long) {
+        try {
+            MediaSessionManager.updateProgress(context, tabId, positionMs, durationMs)
+        } catch (e: Throwable) { }
+    }
+
+    @JavascriptInterface
     fun onMediaPlaying(title: String, artist: String) {
         try {
             MediaSessionManager.updateMetadata(context, tabId, title, artist)

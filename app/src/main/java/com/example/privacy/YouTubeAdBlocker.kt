@@ -201,79 +201,165 @@ object YouTubeAdBlocker {
                 }
             } catch(e) {}
 
-            // 7. Fast video ad skipper & auto fast-forward engine
+            // 7. Conservative ad skipper & unskippable-ad fast-forward engine
+            //
+            // IMPORTANT: this engine only reacts while the YouTube player *itself* reports an
+            // active ad (.html5-video-player.ad-showing / .ad-interrupting). Earlier revisions
+            // also matched loose descendants such as .ytp-ad-player-overlay, which stays in the
+            // DOM during normal playback; that made the player mute itself, run at 16x and jump
+            // to the end of the video whenever the user scrubbed or used the precise-seek
+            // preview. Ad actions are also suspended while a drag/scrub gesture is in flight so
+            // the system seek bar and the in-player preview stay smooth.
             const skipSelectors = [
-                '.ytp-ad-skip-button',
                 '.ytp-ad-skip-button-modern',
+                '.ytp-ad-skip-button',
                 '.ytp-skip-ad-button',
-                '.ytp-ad-skip-button-slot',
+                '.ytp-ad-skip-button-slot button',
                 'button.ytp-ad-skip-button',
                 '.ytm-ad-skip-button',
-                '[class*="skip-button"]',
-                '.ytp-ad-preview-container',
-                '.ytp-ad-overlay-close-button',
-                '.ytp-ad-skip-button-container'
+                '.ytp-ad-overlay-close-button'
             ];
+
+            let adHackApplied = false;
+            let adSeekDone = false;
+            let savedMuted = null;
+            let savedPlaybackRate = null;
+
+            const getPlayerElement = function() {
+                return document.querySelector('.html5-video-player') || document.getElementById('movie_player');
+            };
+
+            const getAdVideo = function() {
+                return document.querySelector('video.html5-main-video') || document.querySelector('video');
+            };
+
+            const isAdShowing = function(player) {
+                try {
+                    if (!player) return false;
+                    return player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting');
+                } catch(e) {
+                    return false;
+                }
+            };
+
+            // The user always wins: never touch the media element while a tap, drag, scrub or
+            // precise-seek preview gesture is in progress.
+            const isUserScrubbing = function(player, video) {
+                try {
+                    if (video && video.seeking) return true;
+                    if (player && (player.classList.contains('ytp-scrubber-dragging') ||
+                                   player.classList.contains('ytp-precise-seeking') ||
+                                   player.classList.contains('ytp-scrubber-button-hover'))) return true;
+                    if (document.querySelector('.ytp-scrubber-dragging, .ytp-precise-seeking')) return true;
+                } catch(e) {}
+                return false;
+            };
+
+            const restoreAdPlayback = function() {
+                if (!adHackApplied) return;
+                adHackApplied = false;
+                adSeekDone = false;
+                try {
+                    const video = getAdVideo();
+                    if (video) {
+                        if (savedMuted !== null) video.muted = savedMuted;
+                        if (savedPlaybackRate !== null) video.playbackRate = savedPlaybackRate;
+                    }
+                } catch(e) {}
+                savedMuted = null;
+                savedPlaybackRate = null;
+            };
 
             const handleVideoAds = function() {
                 try {
-                    // Check for anti-adblock modal and dismiss it
+                    // Dismiss the anti-adblock enforcement dialog if YouTube renders it
                     const enforcementModal = document.querySelector('ytd-enforcement-message-view-model, tp-yt-paper-dialog[role="dialog"]');
-                    if (enforcementModal) {
-                        const hasAdblockText = (enforcementModal.textContent || '').includes('Ad blockers');
-                        if (hasAdblockText) {
-                            enforcementModal.remove();
-                            const backdrops = document.querySelectorAll('tp-yt-iron-overlay-backdrop');
-                            backdrops.forEach(b => b.remove());
-                            const video = document.querySelector('video');
-                            if (video && video.paused) {
-                                video.play().catch(function() {});
-                            }
+                    if (enforcementModal && (enforcementModal.textContent || '').indexOf('Ad blockers') !== -1) {
+                        enforcementModal.remove();
+                        document.querySelectorAll('tp-yt-iron-overlay-backdrop').forEach(function(b) { b.remove(); });
+                        const modalVideo = getAdVideo();
+                        if (modalVideo && modalVideo.paused) {
+                            modalVideo.play().catch(function() {});
                         }
                     }
 
-                    const player = document.querySelector('.html5-video-player');
-                    const isAdShowing = (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) ||
-                                        document.querySelector('.ad-showing, .ad-interrupting, .ytp-ad-player-overlay');
+                    const player = getPlayerElement();
+                    const video = getAdVideo();
 
-                    if (isAdShowing) {
-                        // 1. Immediately click skip buttons
-                        for (let i = 0; i < skipSelectors.length; i++) {
-                            const btn = document.querySelector(skipSelectors[i]);
-                            if (btn) {
-                                btn.click();
-                                break;
-                            }
-                        }
+                    if (!isAdShowing(player)) {
+                        // Normal video: make sure nothing we did during an ad sticks around.
+                        restoreAdPlayback();
+                        return;
+                    }
 
-                        // 2. Mute, speed up, and fast-forward ad
-                        const video = document.querySelector('video.html5-main-video') || document.querySelector('video');
-                        if (video) {
-                            video.muted = true;
-                            video.playbackRate = 16.0;
-                            if (isFinite(video.duration) && video.duration > 0) {
-                                video.currentTime = video.duration + 0.5;
-                            } else {
-                                video.currentTime = 999999;
-                            }
+                    // 1. A real skip button always wins when it is present.
+                    for (let i = 0; i < skipSelectors.length; i++) {
+                        const btn = document.querySelector(skipSelectors[i]);
+                        if (btn) {
+                            btn.click();
+                            return;
                         }
                     }
-                } catch(e) {}
+
+                    // 2. Unskippable ad fallback: mute + fast-forward + jump to the end.
+                    //    Skipped entirely while the user is scrubbing.
+                    if (!video || isUserScrubbing(player, video)) return;
+
+                    if (!adHackApplied) {
+                        savedMuted = video.muted;
+                        savedPlaybackRate = video.playbackRate;
+                        adHackApplied = true;
+                        adSeekDone = false;
+                    }
+                    video.muted = true;
+                    if (video.playbackRate < 8) {
+                        video.playbackRate = 16.0;
+                    }
+                    if (!adSeekDone && isFinite(video.duration) && video.duration > 0) {
+                        adSeekDone = true;
+                        const target = video.duration - 0.05;
+                        if (target > video.currentTime) {
+                            video.currentTime = target;
+                        }
+                    }
+                } catch(e) {
+                    restoreAdPlayback();
+                }
             };
 
-            // High frequency interval (100ms) + MutationObserver for instant response
-            setInterval(handleVideoAds, 100);
-            document.addEventListener('timeupdate', handleVideoAds, true);
-
-            try {
-                const observer = new MutationObserver(function() {
-                    handleVideoAds();
-                });
-                const targetNode = document.body || document.documentElement;
-                if (targetNode) {
-                    observer.observe(targetNode, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+            let observedPlayer = null;
+            let adObserver = null;
+            const attachAdObserver = function() {
+                try {
+                    if (typeof MutationObserver !== 'function') return true;
+                    const player = getPlayerElement();
+                    if (!player) return false;
+                    if (player === observedPlayer && adObserver) return true;
+                    if (adObserver) {
+                        try { adObserver.disconnect(); } catch(e) {}
+                    }
+                    adObserver = new MutationObserver(function() { handleVideoAds(); });
+                    adObserver.observe(player, { attributes: true, attributeFilter: ['class'] });
+                    observedPlayer = player;
+                    return true;
+                } catch(e) {
+                    return true;
                 }
-            } catch(e) {}
+            };
+
+            // Cheap scheduling: the player element's class list changes exactly when an ad
+            // starts or ends, so that is the only thing worth observing (never document.body,
+            // which mutates thousands of times per minute and used to stall the UI thread
+            // while the user was scrubbing). The slow interval doubles as a self-healing
+            // fallback that re-attaches the observer when YouTube swaps the player node.
+            attachAdObserver();
+            setInterval(function() {
+                attachAdObserver();
+                handleVideoAds();
+            }, 500);
+
+            window.addEventListener('yt-navigate-finish', handleVideoAds);
+            window.addEventListener('yt-page-data-updated', handleVideoAds);
         })();
         """.trimIndent()
     }
