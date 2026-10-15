@@ -2,6 +2,8 @@ package com.example
 
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
 import androidx.test.core.app.ApplicationProvider
 import com.example.media.MediaControlAction
 import com.example.media.MediaPlaybackService
@@ -13,7 +15,9 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -282,6 +286,40 @@ class MediaPlaybackUnitTest {
     @Test
     fun mediaPlaybackService_mediaTabExtraIsDefined() {
         assertEquals("com.example.media.EXTRA_MEDIA_TAB_ID", MediaPlaybackService.EXTRA_MEDIA_TAB_ID)
+    }
+
+    @Test
+    fun mediaPlaybackService_neverRequestsAudioFocusWhileMirroringPlayback() {
+        // Regression test for the YouTube pause-on-play loop. MediaPlaybackService used to
+        // call AudioManager.requestAudioFocus() every time the page reported PLAYING. Audio
+        // focus ownership is device-wide and the WebView playing the video already holds it,
+        // so the request revoked it with AUDIOFOCUS_LOSS and Chromium responded by pausing
+        // the page media - the video died a split second after every play press. The service
+        // only mirrors playback into the notification and must never take audio focus.
+        val tabId = "tab_yt_focus"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(context, tabId, "Focus Test", "Channel", "YouTube", "")
+
+        val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val shadowAudioManager = shadowOf(audioManager)
+
+        val controller = Robolectric.buildService(MediaPlaybackService::class.java).create()
+        try {
+            controller.get().onStartCommand(
+                Intent(context, MediaPlaybackService::class.java)
+                    .setAction(MediaPlaybackService.ACTION_UPDATE_STATE),
+                0,
+                1
+            )
+        } finally {
+            controller.destroy()
+            MediaSessionManager.stopPlayback(context)
+        }
+
+        assertNull(
+            "MediaPlaybackService must never request audio focus - the page's WebView already owns it",
+            shadowAudioManager.lastAudioFocusRequest
+        )
     }
 
     @Test

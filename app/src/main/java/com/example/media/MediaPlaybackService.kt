@@ -5,8 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.media.AudioAttributes
-import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
@@ -150,58 +148,28 @@ class MediaPlaybackService : Service() {
     // does not promote an empty service to foreground and briefly post a phantom notification.
     private var pendingStop = false
 
-    // --- Audio focus handling (what Chromium does through its AudioFocusManager) -------------
-    private val audioManager: AudioManager? by lazy {
-        try { getSystemService(Context.AUDIO_SERVICE) as? AudioManager } catch (e: Throwable) { null }
-    }
-    private var audioFocusRequest: AudioFocusRequest? = null
-    private var hasAudioFocus = false
-    private var resumeOnFocusGain = false
+    // --- Audio focus --------------------------------------------------------------
+    // Deliberate design: this service NEVER requests Android audio focus.
+    //
+    // The Chromium WebView that plays the video lives in this same app and already owns
+    // system audio focus on behalf of the page (that is how YouTube in a WebView pauses
+    // when another app starts playing). A focus request from here is a *second, competing*
+    // requester, so the system revokes focus from the WebView with AUDIOFOCUS_LOSS and
+    // Chromium responds by pausing the page media. Since requestAudioFocusIfNeeded() ran on
+    // every PLAYING report (and abandonAudioFocus() on every PAUSED report), each play press
+    // ended in an instant pause - an infinite request/steal/pause loop.
+    //
+    // Letting the WebView keep the focus also keeps the Chromium audio-focus behaviours for
+    // free: pause on phone calls / other apps, ducking under navigation prompts, and resume
+    // after transient losses are all handled by the page's own player. What the page cannot
+    // do itself is still covered below (headphone unplug) and by the pause/duck entry points
+    // in the page script, which keep the notification in sync via the FeatherMediaBridge.
 
     /** Pauses playback in the page and immediately reflects it in the notification. */
     private fun pauseForAudioFocus() {
         try {
             MediaSessionManager.dispatchAction(MediaControlAction.PAUSE)
             updateNotificationAndSession()
-        } catch (e: Throwable) { }
-    }
-
-    /** Resumes playback in the page and immediately reflects it in the notification. */
-    private fun resumeForAudioFocus() {
-        try {
-            resumeOnFocusGain = false
-            MediaSessionManager.dispatchAction(MediaControlAction.PLAY)
-            updateNotificationAndSession()
-        } catch (e: Throwable) { }
-    }
-
-    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
-        try {
-            when (change) {
-                AudioManager.AUDIOFOCUS_GAIN -> {
-                    MediaSessionManager.duckMedia(this, false)
-                    val otherAppPlaying = try { audioManager?.isMusicActive == true } catch (e: Throwable) { false }
-                    if (resumeOnFocusGain && !otherAppPlaying) {
-                        resumeForAudioFocus()
-                    } else if (otherAppPlaying) {
-                        // Another app took over the speakers; do not fight it for audio.
-                        resumeOnFocusGain = false
-                    }
-                }
-                AudioManager.AUDIOFOCUS_LOSS -> {
-                    resumeOnFocusGain = false
-                    abandonAudioFocus()
-                    pauseForAudioFocus()
-                }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
-                    // Phone call, alarm, navigation prompt: pause and resume afterwards.
-                    resumeOnFocusGain = true
-                    pauseForAudioFocus()
-                }
-                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
-                    MediaSessionManager.duckMedia(this, true)
-                }
-            }
         } catch (e: Throwable) { }
     }
 
@@ -338,7 +306,6 @@ class MediaPlaybackService : Service() {
             ACTION_PREV -> MediaSessionManager.dispatchAction(MediaControlAction.PREVIOUS)
             ACTION_STOP -> {
                 stopProgressTicker()
-                abandonAudioFocus()
                 MediaSessionManager.stopPlayback(this)
                 mediaSession?.setActive(false)
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -380,7 +347,6 @@ class MediaPlaybackService : Service() {
 
         if (metadata == null && !isPlaying) {
             stopProgressTicker()
-            abandonAudioFocus()
             mediaSession?.setActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
@@ -424,13 +390,13 @@ class MediaPlaybackService : Service() {
         lastPushedState = playbackState.state
         lastPushedRate = MediaSessionManager.currentPlaybackRate.value
 
-        // Keep the position flowing between the once-per-second reports from the page, and
-        // hold audio focus exactly while media is playing.
+        // Keep the position flowing between the once-per-second reports from the page.
+        // Audio focus is NOT requested here on purpose (see the note at the top of the
+        // class): this app already owns it through the WebView that is playing, and a
+        // competing request from the service makes Chromium pause the page media -
+        // which is exactly the pause-on-play regression this used to cause.
         if (isPlaying) {
-            requestAudioFocusIfNeeded()
             startProgressTicker()
-        } else {
-            abandonAudioFocus()
         }
 
         val metaBuilder = MediaMetadataCompat.Builder()
@@ -607,60 +573,6 @@ class MediaPlaybackService : Service() {
         noisyReceiverRegistered = false
         try {
             unregisterReceiver(noisyReceiver)
-        } catch (e: Throwable) { }
-    }
-
-    /**
-     * Requests audio focus for web media playback. Without it other apps' audio keeps mixing
-     * with the video, phone calls do not pause playback and navigation prompts cannot duck it -
-     * Chromium requests focus for exactly the same reasons.
-     */
-    private fun requestAudioFocusIfNeeded() {
-        if (hasAudioFocus) return
-        val manager = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val request = audioFocusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MOVIE)
-                            .build()
-                    )
-                    // Ducking is handled in the page (see __feather_media_duck) so navigation
-                    // prompts lower the volume instead of pausing the video outright.
-                    .setWillPauseWhenDucked(false)
-                    .setOnAudioFocusChangeListener(audioFocusListener)
-                    .build()
-                    .also { audioFocusRequest = it }
-                hasAudioFocus = manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-            } else {
-                @Suppress("DEPRECATION")
-                hasAudioFocus = manager.requestAudioFocus(
-                    audioFocusListener,
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN
-                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-            }
-        } catch (e: Throwable) {
-            hasAudioFocus = false
-        }
-        if (!hasAudioFocus) {
-            android.util.Log.w(TAG, "Audio focus request was not granted")
-        }
-    }
-
-    private fun abandonAudioFocus() {
-        if (!hasAudioFocus) return
-        hasAudioFocus = false
-        val manager = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { manager.abandonAudioFocusRequest(it) }
-            } else {
-                @Suppress("DEPRECATION")
-                manager.abandonAudioFocus(audioFocusListener)
-            }
         } catch (e: Throwable) { }
     }
 
@@ -875,7 +787,6 @@ class MediaPlaybackService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopProgressTicker()
-        abandonAudioFocus()
         unregisterNoisyReceiver()
         mediaSession?.setActive(false)
         mediaSession?.release()
