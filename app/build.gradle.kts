@@ -33,6 +33,48 @@ val hasFullReleaseSigning = listOf(
   releaseKeyPassword
 ).all { it != null }
 
+// Fail during configuration, before any packaging task runs. This is
+// configuration-cache safe because it does not install a task action that
+// captures build-script objects.
+val releaseBuildTaskNames = setOf(
+  "assembleRelease",
+  "bundleRelease",
+  "packageRelease",
+  "packageReleaseBundle",
+  "signReleaseBundle",
+  "installRelease",
+  "assemble",
+  "bundle",
+  "build",
+  "publish"
+)
+
+val requestedReleaseBuild = gradle.startParameter.taskNames.any { taskName ->
+  taskName.substringAfterLast(':') in releaseBuildTaskNames
+}
+
+if (requestedReleaseBuild) {
+  if (!hasFullReleaseSigning) {
+    val missing = buildList {
+      if (releaseStorePath == null) add("KEYSTORE_PATH (or storeFile)")
+      if (releaseStorePassword == null) add("STORE_PASSWORD (or storePassword)")
+      if (releaseKeyAlias == null) add("KEY_ALIAS (or keyAlias)")
+      if (releaseKeyPassword == null) add("KEY_PASSWORD (or keyPassword)")
+    }
+    throw GradleException(
+      "Release signing is not configured. Missing: ${missing.joinToString()}. " +
+        "Set the environment variables or create keystore.properties from " +
+        "keystore.properties.example. Refusing to produce an unsigned or debug-signed release build."
+    )
+  }
+  if (releaseKeystoreFile == null || !releaseKeystoreFile.exists()) {
+    throw GradleException(
+      "Release keystore not found at ${releaseKeystoreFile?.absolutePath ?: "(unset)"}. " +
+        "Check KEYSTORE_PATH or storeFile in keystore.properties."
+    )
+  }
+}
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -103,39 +145,6 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = false
-  }
-}
-
-// Fail before packaging if a release is requested without a complete,
-// existing signing configuration. This prevents accidentally publishing an
-// unsigned or debug-signed APK.
-val releasePackagingTasks = setOf(
-  "packageRelease",
-  "packageReleaseBundle",
-  "signReleaseBundle"
-)
-
-tasks.matching { it.name in releasePackagingTasks }.configureEach {
-  doFirst {
-    if (!hasFullReleaseSigning) {
-      val missing = buildList {
-        if (releaseStorePath == null) add("KEYSTORE_PATH (or storeFile)")
-        if (releaseStorePassword == null) add("STORE_PASSWORD (or storePassword)")
-        if (releaseKeyAlias == null) add("KEY_ALIAS (or keyAlias)")
-        if (releaseKeyPassword == null) add("KEY_PASSWORD (or keyPassword)")
-      }
-      throw GradleException(
-        "Release signing is not configured. Missing: ${missing.joinToString()}. " +
-          "Set the environment variables or create keystore.properties from " +
-          "keystore.properties.example. Refusing to produce an unsigned or debug-signed release build."
-      )
-    }
-    if (releaseKeystoreFile == null || !releaseKeystoreFile.exists()) {
-      throw GradleException(
-        "Release keystore not found at ${releaseKeystoreFile?.absolutePath ?: "(unset)"}. " +
-          "Check KEYSTORE_PATH or storeFile in keystore.properties."
-      )
-    }
   }
 }
 
