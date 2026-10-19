@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Audible tab indicator**: the tab manager marks the tab that is currently playing media, so background audio can be traced at a glance.
 
 ### Fixed
+- **🔑 Release Signing Is Now Stable and Fail-Fast**:
+  - Release builds now load their signing credentials from environment variables (CI) or a git-ignored `keystore.properties` file (local builds), and fail with a clear error instead of silently producing an unsigned or debug-signed APK.
+  - The GitHub Actions workflow no longer generates a fresh keystore when the signing secrets are missing; it stops before building. It also verifies the published APK's certificate SHA-256 against the configured keystore.
+  - This makes in-place updates reliable as long as the same keystore, `applicationId`, and an increasing `versionCode` are kept. A one-time uninstall is still required when switching from a build signed with an unknown/old key.
 - **⏸️ YouTube Videos No Longer Pause a Split Second After Every Play Press**:
   - Root cause: the media service requested Android audio focus on every `PLAYING` report from the page and released it on every `PAUSED` one. Audio focus ownership is device-wide and the WebView playing the video already holds it for the page, so the service's request revoked it with `AUDIOFOCUS_LOSS` and Chromium responded by pausing the page media — an endless request / steal / pause loop that undid every play press.
   - The service now leaves audio focus to the page's player (which already pauses on calls, ducks under prompts, and resumes afterwards, exactly like Chromium) and keeps only the interruption the page cannot handle itself: pausing when headphones are unplugged.

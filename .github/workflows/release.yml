@@ -65,36 +65,78 @@ jobs:
           cache-read-only: false
 
       - name: Setup Android Release Keystore
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "Decoding permanent release.keystore from GitHub Secret..."
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > release.keystore
-          elif [ -f release.keystore ]; then
-            echo "Using existing release.keystore from workspace..."
-          else
-            echo "Release signing secret not configured in GitHub Secrets."
-            echo "Generating release signing key automatically to complete build..."
-            keytool -genkeypair -v -keystore release.keystore \
-              -alias "${{ secrets.KEY_ALIAS || 'feather_release_key' }}" \
-              -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "${{ secrets.STORE_PASSWORD || 'feather123' }}" \
-              -keypass "${{ secrets.KEY_PASSWORD || 'feather123' }}" \
-              -dname "CN=Feather Browser, OU=Mobile, O=Feather, C=US"
+          set -euo pipefail
+
+          missing=0
+          for name in RELEASE_KEYSTORE_BASE64 STORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required repository secret: ${name}"
+              missing=1
+            fi
+          done
+
+          if [ "${missing}" -ne 0 ]; then
+            echo "::error::Release signing is not configured. Refusing to generate a new key or publish a differently signed APK."
+            exit 1
           fi
-          echo "KEYSTORE_PATH=$GITHUB_WORKSPACE/release.keystore" >> $GITHUB_ENV
-          if [ ! -f debug.keystore ]; then
-            cp release.keystore debug.keystore || true
-          fi
+
+          echo "Decoding permanent release.keystore from RELEASE_KEYSTORE_BASE64..."
+          printf '%s' "${RELEASE_KEYSTORE_BASE64}" | base64 -d > release.keystore
+
+          # Fail early on a wrong password or alias instead of after the build.
+          keytool -list -keystore release.keystore -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}" > /dev/null
+
+          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/release.keystore" >> "${GITHUB_ENV}"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
       - name: Build Release APK
         env:
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || 'feather123' }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS || 'feather_release_key' }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || 'feather123' }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease --build-cache --parallel -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseParallelGC" --stacktrace
+
+      - name: Verify APK signature matches release keystore
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -n 1)
+          if [ -z "${APK}" ]; then
+            echo "::error::Release APK not found"
+            exit 1
+          fi
+
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          if [ -z "${APKSIGNER}" ]; then
+            echo "::error::apksigner not found in Android SDK build-tools"
+            exit 1
+          fi
+
+          "${APKSIGNER}" verify --print-certs "${APK}" | tee apk-certs.txt
+
+          EXPECTED=$(keytool -list -v -keystore release.keystore -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}" 2>/dev/null \
+            | sed -n -E 's/.*SHA-?256: //p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+          ACTUAL=$(sed -n 's/.*SHA-256 digest: //p' apk-certs.txt | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+
+          if [ -z "${EXPECTED}" ] || [ -z "${ACTUAL}" ] || [ "${EXPECTED}" != "${ACTUAL}" ]; then
+            echo "::error::APK certificate does not match the configured release keystore."
+            echo "Expected: ${EXPECTED:-<empty>}"
+            echo "Actual:   ${ACTUAL:-<empty>}"
+            exit 1
+          fi
+
+          echo "Signing certificate verified: ${ACTUAL}"
 
       - name: Prepare Release Assets
         id: prepare_asset

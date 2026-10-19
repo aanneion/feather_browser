@@ -150,9 +150,20 @@ When downloading consecutive APK builds without a persistent release keystore, e
 2. **Google Play Protect / "Unrecognized App" Warning**: Displayed for any sideloaded APK whose signing certificate has not yet accrued reputation in Google Play Protect's cloud telemetry.
 
 ### The Permanent Solution (Used by NewPipe, Tachiyomi, VLC)
-Open-source Android applications solve both issues permanently by creating **one persistent Release Keystore**, storing it securely as a GitHub Repository Secret, and letting GitHub Actions automatically sign every tag and push release with this exact same certificate.
+Open-source Android applications solve the **signature-conflict** problem permanently by creating **one persistent Release Keystore**, storing it securely as a GitHub Repository Secret, and letting GitHub Actions automatically sign every release with this exact same certificate. This guarantees in-place updates; it does not remove every generic Play Protect warning for sideloaded APKs (see Step 5).
 
 #### Step 1: Generate Your Permanent Keystore Locally
+On Windows, the included helper is the easiest option. It hides the password while typing, creates `$HOME\feather-release.keystore`, verifies it, and writes `keystore_base64.txt` in the repository root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\generate-release-keystore.ps1
+```
+
+It prints the certificate SHA-256 and the exact secret names/values you need in Step 3. Use a **new** password that has never been pasted into a chat or terminal history.
+
+<details>
+<summary>Manual keytool commands (Linux/macOS/Git Bash/WSL, or if you prefer not to use the helper)</summary>
+
 Open your terminal (Linux, macOS, or Windows Git Bash / WSL) and run:
 ```bash
 keytool -genkeypair -v \
@@ -165,17 +176,32 @@ keytool -genkeypair -v \
   -keypass <strong-key-password> \
   -dname "CN=Feather Browser, OU=Mobile, O=Feather Privacy, L=San Francisco, ST=California, C=US"
 ```
+
+On Windows PowerShell, use the backtick as the line-continuation character:
+```powershell
+keytool -genkeypair -v `
+  -keystore "$HOME\feather-release.keystore" `
+  -alias feather_release_key `
+  -keyalg RSA -keysize 2048 -validity 10000 `
+  -storepass "<strong-store-password>" `
+  -keypass "<strong-key-password>" `
+  -dname "CN=Feather Browser, OU=Mobile, O=Feather Privacy, L=San Francisco, ST=California, C=US"
+```
+
 *(Use unique, strong passwords and store them only in a password manager or CI secrets. Back up `release.keystore` safely—if it is lost, existing users cannot update without uninstalling.)*
 
+</details>
+
 #### Step 2: Convert Keystore to Base64 String
-Encode the binary keystore file into a clean string so it can be safely stored in GitHub:
+If you used the helper script, `keystore_base64.txt` is already created—skip to Step 3. Otherwise, encode the binary keystore file into a clean string so it can be safely stored in GitHub:
 ```bash
 # On Linux / macOS:
 base64 -w 0 release.keystore > keystore_base64.txt
 # (On macOS if -w 0 is unsupported: base64 -i release.keystore | tr -d '\n' > keystore_base64.txt)
 
-# On Windows PowerShell:
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("release.keystore")) | Out-File -Encoding ASCII keystore_base64.txt
+# On Windows PowerShell (matching the $HOME path from Step 1):
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\feather-release.keystore")) |
+  Set-Content -NoNewline -Encoding ASCII keystore_base64.txt
 ```
 
 #### Step 3: Add to GitHub Repository Secrets
@@ -186,20 +212,53 @@ base64 -w 0 release.keystore > keystore_base64.txt
    - **Secret:** Paste the entire contents of `keystore_base64.txt`.
 4. Add these repository secrets as well:
    - `STORE_PASSWORD`
-   - `KEY_ALIAS`
+   - `KEY_ALIAS` (for example `feather_release_key`)
    - `KEY_PASSWORD`
+
+> All four secrets are required. The workflow intentionally **fails** if any of them is missing, instead of generating a new key. This is what prevents a differently signed APK from ever being published.
 
 #### Step 4: Automated GitHub Actions Workflow
 The repository's `.github/workflows/release.yml` is already pre-configured to:
-- Automatically decode `RELEASE_KEYSTORE_BASE64` during CI runs.
+- Decode `RELEASE_KEYSTORE_BASE64` during CI runs.
+- Refuse to build if any of the four signing secrets is missing (no auto-generated keys).
+- Verify that the built APK's certificate SHA-256 matches the configured keystore before publishing.
 - Increment the version code monotonically (`APP_VERSION_CODE = 100 + run_number`).
 - Compile an R8-optimized release APK (`Feather-Browser-v1.0.x.apk`).
 - Generate SHA-256 checksums and publish an official GitHub Release with downloadable APK assets.
 
 #### Step 5: Updating Your Phone In-Place
-1. For your very first install of the permanently signed version, uninstall any prior test/debug build to clean out temporary debug signatures.
+1. **One-time uninstall:** uninstall any prior test/debug/release build whose signing key you do not control. Android cannot replace an app signed with a different certificate.
 2. Install the newly signed APK from your GitHub Releases.
-3. From this point forward, every subsequent update (e.g. `v1.0.101` -> `v1.0.102`) will **update in-place with a single tap** without losing your bookmarks, history, profiles, or settings, and without signature conflict errors!
+3. From this point forward, every subsequent update (e.g. `v1.0.101` -> `v1.0.102`) will **update in-place with a single tap** without losing your bookmarks, history, profiles, or settings, and without signature conflict errors—provided you keep the same `applicationId`, the same keystore, and an increasing `versionCode`.
+4. A generic Google Play Protect "install unknown app" warning may still appear for sideloaded APKs. That warning is separate from the signature conflict; a stable certificate improves reputation over time but does not guarantee its removal.
+
+#### Local Release Builds (Optional)
+For local builds, copy `keystore.properties.example` to `keystore.properties` in the repository root (it is git-ignored) and fill in your values:
+
+```properties
+storeFile=C:/keys/feather-release.keystore
+storePassword=your-store-password
+keyAlias=feather_release_key
+keyPassword=your-key-password
+```
+
+Then build:
+
+```powershell
+$env:APP_VERSION_CODE="300"   # must be greater than the installed version code
+$env:APP_VERSION_NAME="1.0.300"
+.\gradlew.bat assembleRelease
+```
+
+Environment variables (`KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) take precedence over `keystore.properties`. If release signing is missing or incomplete, the build stops with a clear error—it will not silently produce an unsigned or debug-signed APK.
+
+Output: `app/build/outputs/apk/release/app-release.apk`
+
+#### Troubleshooting
+- **"App not installed" / signature conflict:** the new APK is signed with a different key than the installed app. Uninstall the old app once, then install the new build.
+- **Update blocked after changing `applicationId`:** Android treats it as a different app. Keep `apps.feather.browser` for in-place updates.
+- **Update blocked because of a lower version:** increase `APP_VERSION_CODE` above the installed version.
+- **Lost keystore:** there is no recovery. Existing users must uninstall before installing a build signed with a new key.
 
 ---
 

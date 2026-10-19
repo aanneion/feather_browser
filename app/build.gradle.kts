@@ -1,9 +1,37 @@
+import java.util.Properties
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.roborazzi)
 }
+
+// Release signing is loaded from environment variables (CI) or from a
+// git-ignored keystore.properties file (local builds). The environment wins.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+  if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { load(it) }
+  }
+}
+
+val signingValue: (String, String) -> String? = { envName, propertyName ->
+  System.getenv(envName)?.takeIf { it.isNotBlank() }
+    ?: keystoreProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+}
+
+val releaseStorePath = signingValue("KEYSTORE_PATH", "storeFile")
+val releaseStorePassword = signingValue("STORE_PASSWORD", "storePassword")
+val releaseKeyAlias = signingValue("KEY_ALIAS", "keyAlias")
+val releaseKeyPassword = signingValue("KEY_PASSWORD", "keyPassword")
+val releaseKeystoreFile = releaseStorePath?.let { rootProject.file(it) }
+val hasFullReleaseSigning = listOf(
+  releaseStorePath,
+  releaseStorePassword,
+  releaseKeyAlias,
+  releaseKeyPassword
+).all { it != null }
 
 android {
   namespace = "com.example"
@@ -22,24 +50,13 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
-  // A release build must only use credentials injected by the build environment.
-  // Never fall back to a repository key or a known password.
-  val releaseKeystorePath = System.getenv("KEYSTORE_PATH")
-  val releaseKeystore = releaseKeystorePath?.takeIf { it.isNotBlank() }?.let(::file)
-  val debugKeystore = file("${rootDir}/debug.keystore")
   signingConfigs {
-    create("debugConfig") {
-      storeFile = file("${rootDir}/debug.keystore")
-      storePassword = "android"
-      keyAlias = "androiddebugkey"
-      keyPassword = "android"
-    }
     create("releaseConfig") {
-      if (releaseKeystore != null && releaseKeystore.exists()) {
-        storeFile = releaseKeystore
-        storePassword = System.getenv("STORE_PASSWORD")?.takeIf { it.isNotBlank() } ?: "feather123"
-        keyAlias = System.getenv("KEY_ALIAS")?.takeIf { it.isNotBlank() } ?: "feather_release_key"
-        keyPassword = System.getenv("KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "feather123"
+      if (hasFullReleaseSigning) {
+        storeFile = releaseKeystoreFile
+        storePassword = releaseStorePassword
+        keyAlias = releaseKeyAlias
+        keyPassword = releaseKeyPassword
       }
     }
   }
@@ -53,16 +70,17 @@ android {
         getDefaultProguardFile("proguard-android-optimize.txt"),
         "proguard-rules.pro"
       )
-      signingConfig = if (releaseKeystore != null && releaseKeystore.exists()) {
+      // Never fall back to a debug or unsigned build for release.
+      signingConfig = if (hasFullReleaseSigning) {
         signingConfigs.getByName("releaseConfig")
-      } else if (debugKeystore.exists()) {
-        signingConfigs.getByName("debugConfig")
       } else {
         null
       }
     }
     debug {
-      signingConfig = signingConfigs.getByName("debugConfig")
+      // Uses Android Gradle Plugin's built-in debug signing config, which
+      // creates ~/.android/debug.keystore on demand. Debug keys are never
+      // used for release builds.
     }
   }
 
@@ -85,6 +103,39 @@ android {
   dependenciesInfo {
     includeInApk = false
     includeInBundle = false
+  }
+}
+
+// Fail before packaging if a release is requested without a complete,
+// existing signing configuration. This prevents accidentally publishing an
+// unsigned or debug-signed APK.
+val releasePackagingTasks = setOf(
+  "packageRelease",
+  "packageReleaseBundle",
+  "signReleaseBundle"
+)
+
+tasks.matching { it.name in releasePackagingTasks }.configureEach {
+  doFirst {
+    if (!hasFullReleaseSigning) {
+      val missing = buildList {
+        if (releaseStorePath == null) add("KEYSTORE_PATH (or storeFile)")
+        if (releaseStorePassword == null) add("STORE_PASSWORD (or storePassword)")
+        if (releaseKeyAlias == null) add("KEY_ALIAS (or keyAlias)")
+        if (releaseKeyPassword == null) add("KEY_PASSWORD (or keyPassword)")
+      }
+      throw GradleException(
+        "Release signing is not configured. Missing: ${missing.joinToString()}. " +
+          "Set the environment variables or create keystore.properties from " +
+          "keystore.properties.example. Refusing to produce an unsigned or debug-signed release build."
+      )
+    }
+    if (releaseKeystoreFile == null || !releaseKeystoreFile.exists()) {
+      throw GradleException(
+        "Release keystore not found at ${releaseKeystoreFile?.absolutePath ?: "(unset)"}. " +
+          "Check KEYSTORE_PATH or storeFile in keystore.properties."
+      )
+    }
   }
 }
 

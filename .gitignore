@@ -53,6 +53,8 @@ captures/
 *.jks
 *.keystore
 *.base64
+keystore.properties
+keystore_base64.txt
 !debug.keystore.example
 .env
 .env.local
