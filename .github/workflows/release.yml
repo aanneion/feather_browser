@@ -126,11 +126,11 @@ jobs:
           "${APKSIGNER}" verify --print-certs "${APK}" | tee apk-certs.txt
 
           EXPECTED=$(keytool -list -v -keystore release.keystore -alias "${KEY_ALIAS}" -storepass "${STORE_PASSWORD}" 2>/dev/null \
-            | sed -n -E 's/.*SHA-?256: //p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
-          ACTUAL=$(sed -n 's/.*SHA-256 digest: //p' apk-certs.txt | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')
+            | sed -n -E 's/.*SHA-?256: //p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]:')
+          ACTUAL=$(sed -n 's/.*SHA-256 digest: //p' apk-certs.txt | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]:')
 
           if [ -z "${EXPECTED}" ] || [ -z "${ACTUAL}" ] || [ "${EXPECTED}" != "${ACTUAL}" ]; then
-            echo "::error::APK certificate does not match the configured release keystore."
+            echo "::error::APK certificate does not match the configured release keystore. Expected ${EXPECTED:-<empty>}, actual ${ACTUAL:-<empty>}."
             echo "Expected: ${EXPECTED:-<empty>}"
             echo "Actual:   ${ACTUAL:-<empty>}"
             exit 1
