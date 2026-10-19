@@ -4,6 +4,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import com.example.media.MediaControlAction
 import com.example.media.MediaPlaybackService
@@ -155,6 +156,73 @@ class MediaPlaybackUnitTest {
         assertTrue(script.contains("window.__feather_yt_ad_active = true;"))
         assertTrue(script.contains("window.__feather_yt_ad_active = false;"))
         assertTrue(script.contains("window.__feather_last_ad_end_at = Date.now();"))
+    }
+
+    @Test
+    fun youTubeAdBlockScript_interceptsEveryModernPlayerEndpoint() {
+        val script = YouTubeAdBlocker.getYouTubeAdBlockScript()
+
+        // Modern YouTube fetches the player response from get_watch as well as player.
+        assertTrue(script.contains("/youtubei/v1/get_watch"))
+        assertTrue(script.contains("/youtubei/v1/player"))
+        assertTrue(script.contains("/youtubei/v1/next"))
+
+        // Raw response text is rewritten ("adPlacements" -> "no_ads") in addition to
+        // structural pruning, matching uBlock Origin's trusted-replace rules.
+        assertTrue(script.contains("replaceAdKeys"))
+        assertTrue(script.contains("\"no_ads\""))
+
+        // responseType='json' bypasses responseText, so both XHR accessors are patched.
+        assertTrue(script.contains("patchXhrProperty('responseText')"))
+        assertTrue(script.contains("patchXhrProperty('response')"))
+
+        // Inline page config globals must be cleaned before the player reads them.
+        assertTrue(script.contains("internalPlayerResponse"))
+        assertTrue(script.contains("internalInitialData"))
+
+        // Unskippable-ad fallback now re-seeks on every tick so multi-ad breaks
+        // cannot leave a later ad playing to completion.
+        assertFalse(script.contains("adSeekDone"))
+    }
+
+    @Test
+    fun youTubeAdMedia_onlyMatchesAdSegmentsOnGooglevideo() {
+        assertTrue(
+            YouTubeAdBlocker.isYouTubeAdMedia(
+                Uri.parse("https://rr1---sn-abc.googlevideo.com/videoplayback?adformat=15&id=o-abc")
+            )
+        )
+        assertFalse(
+            YouTubeAdBlocker.isYouTubeAdMedia(
+                Uri.parse("https://rr1---sn-abc.googlevideo.com/videoplayback?id=o-abc&itag=18")
+            )
+        )
+        assertFalse(
+            YouTubeAdBlocker.isYouTubeAdMedia(
+                Uri.parse("https://www.youtube.com/watch?v=abc")
+            )
+        )
+    }
+
+    @Test
+    fun youTubeAdRequest_neverBlocksThePlayerEndpointsNeededForPlayback() {
+        // get_watch/player carry the JSON that is pruned in JS; blocking them would
+        // break playback entirely.
+        assertFalse(
+            YouTubeAdBlocker.isYouTubeAdRequest(
+                Uri.parse("https://www.youtube.com/youtubei/v1/get_watch?prettyPrint=false")
+            )
+        )
+        assertFalse(
+            YouTubeAdBlocker.isYouTubeAdRequest(
+                Uri.parse("https://www.youtube.com/youtubei/v1/player?prettyPrint=false")
+            )
+        )
+        assertTrue(
+            YouTubeAdBlocker.isYouTubeAdRequest(
+                Uri.parse("https://www.youtube.com/pagead/interaction/")
+            )
+        )
     }
 
     @Test

@@ -196,7 +196,14 @@ object ContentBlocker {
 
         val host = uri.host?.lowercase() ?: return false
 
-        // NEVER block googlevideo.com media streams
+        // Ad-only segments inside a googlevideo media stream (they carry adformat).
+        // Must be checked before the generic googlevideo allow rule below.
+        if (YouTubeAdBlocker.isYouTubeAdMedia(uri)) {
+            recordBlockedItem(isTracker = false)
+            return true
+        }
+
+        // NEVER block regular googlevideo.com media streams
         if (host.contains("googlevideo.com")) {
             return false
         }
