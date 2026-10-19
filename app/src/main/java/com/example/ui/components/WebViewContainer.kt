@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.webkit.ScriptHandler
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import com.example.R
@@ -28,6 +29,7 @@ import com.example.browser.WebViewAction
 import com.example.data.model.BrowserProfile
 import com.example.privacy.ContentBlocker
 import com.example.privacy.FingerprintScriptGenerator
+import com.example.privacy.WebViewProfileManager
 import com.example.privacy.YouTubeAdBlocker
 import com.example.media.MediaControlAction
 import com.example.media.MediaSessionManager
@@ -50,12 +52,91 @@ private const val DESKTOP_USER_AGENT =
 private fun isMediaSite(url: String?): Boolean {
     if (url.isNullOrBlank()) return false
     val host = try { Uri.parse(url).host?.lowercase() ?: "" } catch (e: Exception) { "" }
-    return host.contains("youtube.com") || host.contains("youtu.be") ||
+    return host.contains("youtube.com") || host.contains("youtube-nocookie.com") ||
+           host.contains("youtu.be") ||
            host.contains("soundcloud.com") || host.contains("spotify.com") ||
            host.contains("twitch.tv") || host.contains("vimeo.com") ||
            host.contains("bandcamp.com") || host.contains("dailymotion.com") ||
            host.contains("mixcloud.com") || host.contains("audiomack.com") ||
            host.contains("deezer.com")
+}
+
+private val MEDIA_SCRIPT_ORIGINS: Set<String> = setOf(
+    "https://*.youtube.com", "https://youtube.com", "https://*.youtu.be", "https://youtu.be",
+    "https://*.youtube-nocookie.com", "https://youtube-nocookie.com",
+    "https://*.soundcloud.com", "https://soundcloud.com",
+    "https://*.spotify.com", "https://spotify.com",
+    "https://*.twitch.tv", "https://twitch.tv",
+    "https://*.vimeo.com", "https://vimeo.com",
+    "https://*.bandcamp.com", "https://bandcamp.com",
+    "https://*.dailymotion.com", "https://dailymotion.com",
+    "https://*.mixcloud.com", "https://mixcloud.com",
+    "https://*.audiomack.com", "https://audiomack.com",
+    "https://*.deezer.com", "https://deezer.com"
+)
+
+private val YOUTUBE_SCRIPT_ORIGINS: Set<String> = setOf(
+    "https://*.youtube.com", "https://youtube.com",
+    "https://*.youtube-nocookie.com", "https://youtube-nocookie.com",
+    "https://*.youtu.be", "https://youtu.be"
+)
+
+private val documentStartHandlers =
+    java.util.Collections.synchronizedMap(java.util.WeakHashMap<WebView, MutableList<ScriptHandler>>())
+
+private fun removeDocumentStartScripts(webView: WebView) {
+    documentStartHandlers.remove(webView)?.forEach { handler ->
+        try { handler.remove() } catch (t: Throwable) { }
+    }
+}
+
+private fun installDocumentStartScripts(
+    webView: WebView,
+    profileId: String,
+    adBlockEnabled: Boolean,
+    backgroundPlayEnabled: Boolean,
+    preset: FingerprintPreset,
+    customUserAgent: String?,
+    isPrivate: Boolean
+) {
+    val oldHandlers = documentStartHandlers[webView]?.toList().orEmpty()
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+        removeDocumentStartScripts(webView)
+        return
+    }
+    val scripts = mutableListOf<Pair<String, Set<String>>>()
+    if (adBlockEnabled) {
+        scripts += YouTubeAdBlocker.getYouTubeAdBlockScript() to YOUTUBE_SCRIPT_ORIGINS
+    }
+    // The media-session bridge is independent of background play. It must be present so
+    // the notification, lock screen, Bluetooth controls, and seek bar work even when the
+    // user has not opted into background playback.
+    scripts += FingerprintScriptGenerator.generateMediaSessionScript() to MEDIA_SCRIPT_ORIGINS
+    if (backgroundPlayEnabled) {
+        scripts += FingerprintScriptGenerator.generateBackgroundPlayShimScript() to MEDIA_SCRIPT_ORIGINS
+    }
+    val shouldInjectFingerprint = !isPrivate &&
+        (preset != FingerprintPreset.DEFAULT || !customUserAgent.isNullOrBlank())
+    if (shouldInjectFingerprint) {
+        scripts += FingerprintScriptGenerator.generateInjectionScript(
+            preset = preset,
+            customUserAgent = customUserAgent,
+            enableCanvasNoise = true
+        ) to setOf("*")
+    }
+    val handlers = mutableListOf<ScriptHandler>()
+    try {
+        scripts.forEach { (script, origins) ->
+            handlers += WebViewCompat.addDocumentStartJavaScript(webView, script, origins)
+        }
+        documentStartHandlers[webView] = handlers
+        // Remove the previous generation only after the replacement is live, so a failed
+        // update can never leave the tab without document-start protection.
+        oldHandlers.forEach { runCatching { it.remove() } }
+    } catch (t: Throwable) {
+        android.util.Log.w("FeatherWebView", "Document-start script installation failed for $profileId", t)
+        handlers.forEach { runCatching { it.remove() } }
+    }
 }
 
 class PersistentWebView(context: Context) : WebView(context) {
@@ -302,6 +383,8 @@ fun WebViewContainer(
     viewModel: BrowserViewModel,
     actions: SharedFlow<WebViewAction>,
     isActive: Boolean = true,
+    isPrivate: Boolean = false,
+    profileIdentityVersion: Int = 0,
     isAddressBarEditing: Boolean = false,
     onDismissAddressBar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -394,12 +477,27 @@ fun WebViewContainer(
     // This is enforced via the ContextThemeWrapper used to create the WebView below.
     val effectiveDark = isDarkTheme
 
-    val activePreset = remember(currentProfile?.fingerprintPreset) {
+    val effectiveProfileId = if (isPrivate) {
+        WebViewProfileManager.PRIVATE_PROFILE_ID
+    } else {
+        currentProfile?.id ?: WebViewProfileManager.DEFAULT_PROFILE_ID
+    }
+    val profilePreset = remember(currentProfile?.fingerprintPreset) {
         FingerprintPreset.fromString(currentProfile?.fingerprintPreset)
     }
+    val activePreset = if (isPrivate) FingerprintPreset.DEFAULT else profilePreset
+    val effectiveCustomUserAgent = if (isPrivate) "" else currentProfile?.customUserAgent
 
     val activeSearchEngine = viewModel.searchEngine.collectAsState().value
     val currentHttpsMode by rememberUpdatedState(httpsMode)
+    // WebViewClient instances outlive recomposition. Always read the latest values instead
+    // of the ones captured when the WebView was first constructed.
+    val currentAdBlockEnabled by rememberUpdatedState(isAdBlockEnabled)
+    val currentWhitelistedDomains by rememberUpdatedState(whitelistedDomains)
+    val currentBlockThirdPartyCookies by rememberUpdatedState(blockThirdPartyCookies)
+    val currentEnableBackgroundPlay by rememberUpdatedState(enableBackgroundPlay)
+    val currentPresetState by rememberUpdatedState(activePreset)
+    val currentCustomUserAgentState by rememberUpdatedState(effectiveCustomUserAgent)
 
     var renderCrashCount by remember(tabId) { mutableStateOf(0) }
 
@@ -427,16 +525,15 @@ fun WebViewContainer(
                     if (webView.canGoForward()) webView.goForward()
                 }
                 is WebViewAction.SetDesktopMode -> {
-                    val ua = if (action.enabled) {
-                        DESKTOP_USER_AGENT
-                    } else if (!currentProfile?.customUserAgent.isNullOrBlank()) {
-                        currentProfile?.customUserAgent
-                    } else if (activePreset.userAgent.isNotBlank()) {
-                        activePreset.userAgent
-                    } else {
-                        defaultUserAgent
+                    val ua = when {
+                        action.enabled -> DESKTOP_USER_AGENT
+                        !currentCustomUserAgentState.isNullOrBlank() -> currentCustomUserAgentState
+                        currentPresetState.userAgent.isNotBlank() -> currentPresetState.userAgent
+                        else -> defaultUserAgent
                     }
-                    webView.settings.userAgentString = ua
+                    if (!ua.isNullOrBlank()) {
+                        webView.settings.userAgentString = ua
+                    }
                     webView.reload()
                 }
                 is WebViewAction.FindAllAsync -> {
@@ -541,6 +638,64 @@ fun WebViewContainer(
         } catch (e: Exception) { }
     }
 
+    val supportsDocumentStart = remember {
+        try { WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT) } catch (t: Throwable) { false }
+    }
+
+    // Profile edits and privacy toggles should affect future navigations immediately. The
+    // factory installs these scripts before the first load; this effect replaces the
+    // handlers when the profile/settings change and also applies them to the current page.
+    LaunchedEffect(
+        tabId,
+        webViewRef,
+        effectiveProfileId,
+        isAdBlockEnabled,
+        enableBackgroundPlay,
+        activePreset,
+        effectiveCustomUserAgent,
+        isPrivate
+    ) {
+        val webView = webViewRef ?: return@LaunchedEffect
+        if (supportsDocumentStart) {
+            installDocumentStartScripts(
+                webView = webView,
+                profileId = effectiveProfileId,
+                adBlockEnabled = isAdBlockEnabled,
+                backgroundPlayEnabled = enableBackgroundPlay,
+                preset = activePreset,
+                customUserAgent = effectiveCustomUserAgent,
+                isPrivate = isPrivate
+            )
+        }
+        val currentUrl = webView.url ?: return@LaunchedEffect
+        try {
+            if (isMediaSite(currentUrl)) {
+                webView.evaluateJavascript(FingerprintScriptGenerator.generateMediaSessionScript(), null)
+                if (enableBackgroundPlay) {
+                    webView.evaluateJavascript(FingerprintScriptGenerator.generateBackgroundPlayShimScript(), null)
+                }
+            }
+            if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(currentUrl)) {
+                webView.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
+            }
+            if (!isPrivate && (activePreset != FingerprintPreset.DEFAULT || !effectiveCustomUserAgent.isNullOrBlank())) {
+                webView.evaluateJavascript(
+                    FingerprintScriptGenerator.generateInjectionScript(
+                        activePreset,
+                        effectiveCustomUserAgent,
+                        enableCanvasNoise = true
+                    ),
+                    null
+                )
+            }
+        } catch (t: Throwable) { }
+    }
+
+    LaunchedEffect(blockThirdPartyCookies, webViewRef) {
+        val webView = webViewRef ?: return@LaunchedEffect
+        WebViewProfileManager.configureCookies(webView, effectiveProfileId, blockThirdPartyCookies)
+    }
+
     DisposableEffect(tabId) {
         onDispose {
             try {
@@ -550,6 +705,7 @@ fun WebViewContainer(
                     MediaSessionManager.onMediaEnded(context.applicationContext, tabId)
                 }
                 MediaSessionManager.unregisterWebView(tabId)
+                webViewRef?.let { removeDocumentStartScripts(it) }
                 webViewRef?.apply {
                     if (this is PersistentWebView) {
                         this.allowBackgroundPlayback = false
@@ -569,7 +725,7 @@ fun WebViewContainer(
     // Key includes `effectiveDark`: `prefers-color-scheme` is resolved by Chromium once,
     // from the theme of the context the WebView is created with, so flipping the browser
     // theme must recreate the WebView (reloading the tab's current URL) to re-resolve it.
-    key(tabId, renderCrashCount, effectiveDark) {
+    key(tabId, renderCrashCount, effectiveDark, profileIdentityVersion) {
         Box(
             modifier = modifier
                 .fillMaxSize()
@@ -592,6 +748,8 @@ fun WebViewContainer(
                     )
 
                     PersistentWebView(webThemeContext).apply {
+                        // Must happen before the first navigation / JavaScript evaluation.
+                        WebViewProfileManager.applyToWebView(this, effectiveProfileId)
                         this.isAddressBarEditing = isAddressBarEditing
                         this.onDismissAddressBar = onDismissAddressBar
                         allowBackgroundPlayback = enableBackgroundPlay
@@ -693,14 +851,11 @@ fun WebViewContainer(
                             cacheMode = WebSettings.LOAD_DEFAULT
 
                             // Profile Fingerprint & User-Agent Configuration
-                            if (isDesktopMode) {
-                                userAgentString = DESKTOP_USER_AGENT
-                            } else if (!currentProfile?.customUserAgent.isNullOrBlank()) {
-                                currentProfile?.customUserAgent
-                            } else if (activePreset.userAgent.isNotBlank()) {
-                                userAgentString = activePreset.userAgent
-                            } else {
-                                userAgentString = defaultUserAgent
+                            userAgentString = when {
+                                isDesktopMode -> DESKTOP_USER_AGENT
+                                !effectiveCustomUserAgent.isNullOrBlank() -> effectiveCustomUserAgent
+                                activePreset.userAgent.isNotBlank() -> activePreset.userAgent
+                                else -> defaultUserAgent ?: settings.userAgentString
                             }
 
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -712,12 +867,9 @@ fun WebViewContainer(
                             }
                         }
 
-                        // Cookie Policy
-                        val cookieManager = CookieManager.getInstance()
-                        cookieManager.setAcceptCookie(true)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                            cookieManager.setAcceptThirdPartyCookies(this, !blockThirdPartyCookies)
-                        }
+                        // Cookie Policy (applied to this WebView's profile, not to the
+                        // process-wide default profile)
+                        WebViewProfileManager.configureCookies(this, effectiveProfileId, blockThirdPartyCookies)
 
                         // Dark mode for web content.
                         // `prefers-color-scheme` is driven by the ContextThemeWrapper used to create
@@ -750,11 +902,11 @@ fun WebViewContainer(
                             ): WebResourceResponse? {
                                 val uri = request?.url ?: return null
                                 val host = uri.host ?: ""
-                                val isWhitelisted = whitelistedDomains.any {
+                                val isWhitelisted = currentWhitelistedDomains.any {
                                     com.example.browser.UrlUtils.isSameOrSubdomain(host, it)
                                 }
 
-                                if (ContentBlocker.shouldBlock(uri, isAdBlockEnabled, isWhitelisted)) {
+                                if (ContentBlocker.shouldBlock(uri, currentAdBlockEnabled, isWhitelisted)) {
                                     ContentBlocker.recordBlockForTab(tabId)
                                     return ContentBlocker.createEmptyResponse(uri)
                                 }
@@ -775,17 +927,37 @@ fun WebViewContainer(
 
                             override fun onPageCommitVisible(view: WebView?, url: String?) {
                                 super.onPageCommitVisible(view, url)
-                                if (isMediaSite(url ?: view?.url)) {
+                                val committedUrl = url ?: view?.url
+                                if (isMediaSite(committedUrl)) {
                                     try {
                                         val themeScript = FingerprintScriptGenerator.generateThemeScript(effectiveDark)
                                         view?.evaluateJavascript(themeScript, null)
                                     } catch (e: Exception) { }
                                 }
 
-                                if (enableBackgroundPlay && isMediaSite(url ?: view?.url)) {
+                                // Document-start handlers already run before page scripts on
+                                // modern WebView. Only fall back to post-load injection when
+                                // that API is unavailable.
+                                if (!supportsDocumentStart) {
                                     try {
-                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
-                                        view?.evaluateJavascript(bgScript, null)
+                                        if (isMediaSite(committedUrl)) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generateMediaSessionScript(),
+                                                null
+                                            )
+                                            if (currentEnableBackgroundPlay) {
+                                                view?.evaluateJavascript(
+                                                    FingerprintScriptGenerator.generateBackgroundPlayShimScript(),
+                                                    null
+                                                )
+                                            }
+                                        }
+                                        if (currentAdBlockEnabled && YouTubeAdBlocker.isYouTube(committedUrl)) {
+                                            view?.evaluateJavascript(
+                                                YouTubeAdBlocker.getYouTubeAdBlockScript(),
+                                                null
+                                            )
+                                        }
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -811,18 +983,42 @@ fun WebViewContainer(
                                     canGoForward = view?.canGoForward() ?: false
                                 )
 
-                                // Inject Background Audio/Video playback script ONLY on media sites when background play is enabled
-                                if (enableBackgroundPlay && isMediaSite(url ?: view?.url)) {
+                                // Legacy WebView fallback: this is the old post-load path and is
+                                // only used when DOCUMENT_START_SCRIPT is unavailable.
+                                if (!supportsDocumentStart) {
+                                    val finishedUrl = url ?: view?.url
                                     try {
-                                        val bgScript = FingerprintScriptGenerator.generateBackgroundPlayScript()
-                                        view?.evaluateJavascript(bgScript, null)
-                                    } catch (e: Exception) { }
-                                }
-
-                                // Inject YouTube AdBlocker script
-                                if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(url ?: view?.url)) {
-                                    try {
-                                        view?.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
+                                        if (isMediaSite(finishedUrl)) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generateMediaSessionScript(),
+                                                null
+                                            )
+                                            if (currentEnableBackgroundPlay) {
+                                                view?.evaluateJavascript(
+                                                    FingerprintScriptGenerator.generateBackgroundPlayShimScript(),
+                                                    null
+                                                )
+                                            }
+                                        }
+                                        if (currentAdBlockEnabled && YouTubeAdBlocker.isYouTube(finishedUrl)) {
+                                            view?.evaluateJavascript(
+                                                YouTubeAdBlocker.getYouTubeAdBlockScript(),
+                                                null
+                                            )
+                                        }
+                                        if (!isPrivate &&
+                                            (currentPresetState != FingerprintPreset.DEFAULT ||
+                                                !currentCustomUserAgentState.isNullOrBlank())
+                                        ) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generateInjectionScript(
+                                                    currentPresetState,
+                                                    currentCustomUserAgentState,
+                                                    enableCanvasNoise = true
+                                                ),
+                                                null
+                                            )
+                                        }
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -1170,6 +1366,18 @@ fun WebViewContainer(
                             }
                         }
 
+                        // Install before the first navigation so ad-blocking, the media
+                        // bridge, and the fingerprint are active from document start.
+                        installDocumentStartScripts(
+                            webView = this,
+                            profileId = effectiveProfileId,
+                            adBlockEnabled = isAdBlockEnabled,
+                            backgroundPlayEnabled = enableBackgroundPlay,
+                            preset = activePreset,
+                            customUserAgent = effectiveCustomUserAgent,
+                            isPrivate = isPrivate
+                        )
+
                         webViewRef = this
                         MediaSessionManager.registerWebView(tabId, this)
                         if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
@@ -1185,6 +1393,18 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                         webView.isAddressBarEditing = isAddressBarEditing
                         webView.onDismissAddressBar = onDismissAddressBar
+                    }
+
+                    val desiredUserAgent = when {
+                        isDesktopMode -> DESKTOP_USER_AGENT
+                        !effectiveCustomUserAgent.isNullOrBlank() -> effectiveCustomUserAgent
+                        activePreset.userAgent.isNotBlank() -> activePreset.userAgent
+                        else -> defaultUserAgent
+                    }
+                    if (!desiredUserAgent.isNullOrBlank() &&
+                        webView.settings.userAgentString != desiredUserAgent
+                    ) {
+                        webView.settings.userAgentString = desiredUserAgent
                     }
 
                     // Keep web rendering synchronized with the active browser theme.
@@ -1204,6 +1424,7 @@ fun WebViewContainer(
                     // The WebView is recreated whenever the browser theme flips (key above).
                     // Destroy the replaced instance so the old renderer is not leaked; the
                     // current instance is torn down by the tab-close cleanup instead.
+                    removeDocumentStartScripts(oldWebView)
                     (oldWebView as? PersistentWebView)?.destroySafely()
                 },
                 modifier = Modifier.fillMaxSize()

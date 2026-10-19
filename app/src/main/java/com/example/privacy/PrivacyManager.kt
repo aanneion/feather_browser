@@ -4,9 +4,7 @@ import android.app.DownloadManager
 import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
-import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
-import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.example.data.AppDatabase
@@ -46,13 +44,12 @@ class PrivacyManager(private val context: Context, private val database: AppData
         }
         if (clearCookies) {
             withContext(Dispatchers.Main) {
-                CookieManager.getInstance().removeAllCookies(null)
-                CookieManager.getInstance().flush()
+                WebViewProfileManager.clearAllCookies()
             }
         }
         if (clearSiteData) {
             withContext(Dispatchers.Main) {
-                WebStorage.getInstance().deleteAllData()
+                WebViewProfileManager.clearAllSiteData()
             }
         }
         if (clearCache) {
@@ -76,10 +73,16 @@ class PrivacyManager(private val context: Context, private val database: AppData
     }
 
     /**
-     * Removes private tab metadata. Android WebView's cookie and storage stores are process-wide,
-     * so clearing them here would also destroy normal-profile sessions.
+     * Removes private tab metadata and, on multi-profile WebView, the private session's
+     * isolated cookies and site storage. Normal profiles are untouched.
      */
     suspend fun cleanPrivateSessionData() = withContext(Dispatchers.IO) {
         database.tabDao().deleteAllPrivateTabs()
+        withContext(Dispatchers.Main) {
+            WebViewProfileManager.clearProfileData(
+                context,
+                WebViewProfileManager.PRIVATE_PROFILE_ID
+            )
+        }
     }
 }

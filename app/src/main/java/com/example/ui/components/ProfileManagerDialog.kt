@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.FingerprintPreset
 import com.example.data.model.BrowserProfile
+import com.example.privacy.WebViewProfileManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -38,6 +39,7 @@ fun ProfileManagerDialog(
     onCreateProfile: (displayName: String, iconName: String, colorHex: String, fingerprintPreset: String) -> Unit,
     onUpdateProfile: (BrowserProfile) -> Unit,
     onDeleteProfile: (String) -> Unit,
+    onClearProfileData: (String) -> Unit = {},
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -45,6 +47,7 @@ fun ProfileManagerDialog(
     var profileToEditFingerprint by remember { mutableStateOf<BrowserProfile?>(null) }
     var profileToDelete by remember { mutableStateOf<BrowserProfile?>(null) }
     val modalBottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isolationSupported = remember { WebViewProfileManager.isSupported() }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -69,7 +72,11 @@ fun ProfileManagerDialog(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Isolated storage, cookies, and device fingerprints",
+                        text = if (isolationSupported) {
+                            "Separate cookies, site storage, and device fingerprints"
+                        } else {
+                            "Separate history and bookmarks; WebView cookies are shared on this device"
+                        },
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -86,6 +93,23 @@ fun ProfileManagerDialog(
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("New", fontSize = 13.sp)
+                }
+            }
+
+            if (!isolationSupported) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "This WebView version does not support isolated profiles. " +
+                            "Update Android System WebView to get separate cookies and site storage per profile.",
+                        fontSize = 11.5.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                    )
                 }
             }
 
@@ -178,7 +202,11 @@ fun ProfileManagerDialog(
                                         }
                                     }
                                     Text(
-                                        text = preset.displayName,
+                                        text = buildString {
+                                            append(preset.displayName)
+                                            if (!profile.adBlockEnabled) append(" · Ad block off")
+                                            if (!profile.backgroundPlayEnabled) append(" · BG off")
+                                        },
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -194,7 +222,7 @@ fun ProfileManagerDialog(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Fingerprint,
-                                        contentDescription = "Edit Fingerprint",
+                                        contentDescription = "Edit profile, fingerprint, and privacy",
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(20.dp)
                                     )
@@ -219,6 +247,13 @@ fun ProfileManagerDialog(
                 }
             }
 
+            Text(
+                text = "Tap the fingerprint icon to edit the profile name, identity, privacy defaults, custom user-agent, or to clear its cookies.",
+                fontSize = 10.5.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp, start = 4.dp, end = 4.dp)
+            )
+
             Spacer(modifier = Modifier.height(24.dp))
         }
     }
@@ -242,6 +277,9 @@ fun ProfileManagerDialog(
                 onUpdateProfile(updated)
                 profileToEditFingerprint = null
             },
+            onClearData = {
+                onClearProfileData(profile.id)
+            },
             onDismiss = { profileToEditFingerprint = null }
         )
     }
@@ -252,7 +290,13 @@ fun ProfileManagerDialog(
             onDismissRequest = { profileToDelete = null },
             title = { Text("Delete Profile?") },
             text = {
-                Text("Deleting '${profileToDelete?.displayName}' will permanently erase its isolated cookies, fingerprints, history, bookmarks, and open tabs.")
+                Text(
+                    if (isolationSupported) {
+                        "Deleting '${profileToDelete?.displayName}' permanently erases its tabs, history, bookmarks, downloads, and its isolated cookies/site storage."
+                    } else {
+                        "Deleting '${profileToDelete?.displayName}' permanently erases its tabs, history, bookmarks, and downloads. This WebView version shares cookies between profiles."
+                    }
+                )
             },
             confirmButton = {
                 Button(
@@ -278,8 +322,11 @@ fun ProfileManagerDialog(
 fun EditProfileFingerprintDialog(
     profile: BrowserProfile,
     onConfirm: (BrowserProfile) -> Unit,
+    onClearData: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
+    var displayName by remember { mutableStateOf(profile.displayName) }
+    var customUserAgent by remember { mutableStateOf(profile.customUserAgent) }
     var selectedPreset by remember {
         mutableStateOf(
             try {
@@ -289,39 +336,144 @@ fun EditProfileFingerprintDialog(
             }
         )
     }
+    var adBlockEnabled by remember { mutableStateOf(profile.adBlockEnabled) }
+    var blockThirdPartyCookies by remember { mutableStateOf(profile.blockThirdPartyCookies) }
+    var backgroundPlayEnabled by remember { mutableStateOf(profile.backgroundPlayEnabled) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    val isolationSupported = remember { WebViewProfileManager.isSupported() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Default.Fingerprint,
+                    imageVector = Icons.Default.Person,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Browser Fingerprint & Identity", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Text("Edit Profile", fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
         },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 380.dp)
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                Text(
-                    text = "Configure how '${profile.displayName}' presents itself to remote websites:",
-                    fontSize = 12.5.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                OutlinedTextField(
+                    value = displayName,
+                    onValueChange = {
+                        if (it.length <= 32) {
+                            displayName = it.replace("\\s+".toRegex(), " ")
+                        }
+                    },
+                    label = { Text("Profile Name") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 )
+
                 Spacer(modifier = Modifier.height(12.dp))
 
-                LazyColumn(
+                OutlinedTextField(
+                    value = customUserAgent,
+                    onValueChange = { if (it.length <= 512) customUserAgent = it },
+                    label = { Text("Custom User-Agent (optional)") },
+                    placeholder = { Text("Leave empty to use the preset") },
+                    minLines = 2,
+                    maxLines = 3,
+                    shape = RoundedCornerShape(12.dp),
+                    supportingText = {
+                        Text(
+                            "Only change this if a site needs a specific identity. A blank value uses the fingerprint preset.",
+                            fontSize = 10.5.sp
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text("Privacy defaults", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "These apply to this profile's tabs and can also be changed from Settings.",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Ad blocking", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Block ads and trackers in this profile",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = adBlockEnabled,
+                        onCheckedChange = { adBlockEnabled = it }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Block third-party cookies", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Stop cross-site cookie tracking",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = blockThirdPartyCookies,
+                        onCheckedChange = { blockThirdPartyCookies = it }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Background playback", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Keep audio/video playing when this tab is hidden",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = backgroundPlayEnabled,
+                        onCheckedChange = { backgroundPlayEnabled = it }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Text("Browser fingerprint & identity", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Choose the device identity presented to websites for this profile.",
+                    fontSize = 10.5.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(FingerprintPreset.entries) { preset ->
+                    FingerprintPreset.entries.forEach { preset ->
                         val isSelected = selectedPreset == preset
                         Surface(
                             shape = RoundedCornerShape(12.dp),
@@ -338,24 +490,25 @@ fun EditProfileFingerprintDialog(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(10.dp),
+                                    .padding(8.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 RadioButton(
                                     selected = isSelected,
-                                    onClick = { selectedPreset = preset }
+                                    onClick = { selectedPreset = preset },
+                                    modifier = Modifier.size(22.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = preset.displayName,
-                                        fontSize = 13.5.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
                                     Text(
                                         text = preset.description,
-                                        fontSize = 11.5.sp,
+                                        fontSize = 10.5.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
@@ -363,15 +516,49 @@ fun EditProfileFingerprintDialog(
                         }
                     }
                 }
+
+                if (onClearData != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (!isolationSupported) {
+                        Text(
+                            "Cookie isolation needs a newer Android System WebView. On this version, clearing cookies affects the shared WebView jar.",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    TextButton(
+                        onClick = { showClearConfirm = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Clear cookies & site data for this profile")
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    onConfirm(profile.copy(fingerprintPreset = selectedPreset.name))
-                }
+                    onConfirm(
+                        profile.copy(
+                            displayName = displayName.trim().ifBlank { profile.displayName },
+                            customUserAgent = customUserAgent.trim(),
+                            fingerprintPreset = selectedPreset.name,
+                            adBlockEnabled = adBlockEnabled,
+                            blockThirdPartyCookies = blockThirdPartyCookies,
+                            backgroundPlayEnabled = backgroundPlayEnabled
+                        )
+                    )
+                },
+                enabled = displayName.isNotBlank()
             ) {
-                Text("Save Identity")
+                Text("Save Profile")
             }
         },
         dismissButton = {
@@ -380,6 +567,35 @@ fun EditProfileFingerprintDialog(
             }
         }
     )
+
+    if (showClearConfirm && onClearData != null) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear site data?") },
+            text = {
+                Text(
+                    "This removes cookies and site storage for '${profile.displayName}'. " +
+                        "History, bookmarks, and downloads are not deleted."
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearConfirm = false
+                        onClearData()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Clear data")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 }
 
 @Composable

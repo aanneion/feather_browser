@@ -12,7 +12,8 @@ object YouTubeAdBlocker {
     fun isYouTube(url: String?): Boolean {
         if (url.isNullOrBlank()) return false
         val lower = url.lowercase()
-        return lower.contains("youtube.com") || lower.contains("youtu.be")
+        return lower.contains("youtube.com") || lower.contains("youtube-nocookie.com") ||
+            lower.contains("youtu.be")
     }
 
     fun isYouTubeAdRequest(uri: Uri): Boolean {
@@ -31,7 +32,7 @@ object YouTubeAdBlocker {
         }
 
         // Match Google / YouTube dedicated ad and tracking endpoints
-        if (host.contains("youtube.com")) {
+        if (host.contains("youtube.com") || host.contains("youtube-nocookie.com")) {
             if (path.contains("/pagead/") ||
                 path.contains("/api/stats/ads") ||
                 path.contains("/ptracking")) {
@@ -285,8 +286,21 @@ object YouTubeAdBlocker {
 
                     const player = getPlayerElement();
                     const video = getAdVideo();
+                    const adShowing = isAdShowing(player);
 
-                    if (!isAdShowing(player)) {
+                    // Publish a small, cheap-to-read ad state for the media bridge. This is
+                    // what stops the notification from briefly switching to the ad's title,
+                    // duration, or `ended` event while a preroll/midroll is being removed.
+                    if (adShowing) {
+                        if (window.__feather_yt_ad_active !== true) {
+                            window.__feather_yt_ad_started_at = Date.now();
+                        }
+                        window.__feather_yt_ad_active = true;
+                    } else {
+                        if (window.__feather_yt_ad_active === true) {
+                            window.__feather_last_ad_end_at = Date.now();
+                        }
+                        window.__feather_yt_ad_active = false;
                         // Normal video: make sure nothing we did during an ad sticks around.
                         restoreAdPlayback();
                         return;

@@ -87,7 +87,10 @@ object MediaSessionManager {
         val cleanTitle = title.trim().ifBlank { "Playing Audio" }
         val cleanArtist = artist.trim().ifBlank { "Feather Browser" }
         val current = _currentMetadata.value
-        val isSameTrack = current?.tabId == tabId && current.title == cleanTitle
+        val isSameTrack = current?.tabId == tabId &&
+            current.title == cleanTitle &&
+            current.artist == cleanArtist &&
+            (artworkUrl.isBlank() || current.artworkUrl.isBlank() || current.artworkUrl == artworkUrl)
         val effectiveArtworkUrl = if (artworkUrl.isNotBlank()) {
             artworkUrl
         } else if (isSameTrack && current.artworkUrl.isNotBlank()) {
@@ -95,7 +98,13 @@ object MediaSessionManager {
         } else {
             ""
         }
-        val effectiveDuration = if (durationMs > 0) durationMs else (current?.durationMs ?: 0L)
+        // Never carry the previous video's duration into a new track. That was the cause of
+        // the notification seek bar briefly showing the old length (or the ad's length).
+        val effectiveDuration = when {
+            durationMs > 0L -> durationMs
+            isSameTrack -> current?.durationMs ?: 0L
+            else -> 0L
+        }
         val meta = BrowserMediaMetadata(
             title = cleanTitle,
             artist = cleanArtist,
@@ -228,8 +237,11 @@ object MediaSessionManager {
     fun onMediaEnded(context: Context, tabId: String) {
         if (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null) {
             scope.launch {
-                // Short grace period to allow YouTube playlist or next track autoplay to start seamlessly
-                kotlinx.coroutines.delay(1000)
+                // Grace period: YouTube SPA playlist/next-video transitions (and the end of a
+                // skipped ad) briefly report ENDED before the next source starts. Being too
+                // eager here stopped and restarted the notification, which looked like a
+                // flicker in the lock-screen player.
+                kotlinx.coroutines.delay(1500)
                 val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
                 if (!isActive && (_activeMediaTabId.value == tabId || _activeMediaTabId.value == null)) {
                     stopPlayback(context)
@@ -275,29 +287,44 @@ object MediaSessionManager {
         ) {
             return
         }
-        if (positionMs >= 0) {
-            _currentPositionMs.value = positionMs
-        }
         val current = _currentMetadata.value
-        if (current != null && current.tabId == tabId) {
-            if (durationMs > 0 && current.durationMs != durationMs) {
-                _currentMetadata.value = current.copy(durationMs = durationMs)
+        val effectiveDuration = when {
+            durationMs > 0L -> durationMs
+            current?.tabId == tabId -> current.durationMs
+            else -> 0L
+        }
+        if (positionMs >= 0) {
+            _currentPositionMs.value = if (effectiveDuration > 0L) {
+                positionMs.coerceIn(0L, effectiveDuration)
+            } else {
+                positionMs
             }
-        } else if (durationMs > 0) {
+        }
+        var durationChanged = false
+        if (current != null && current.tabId == tabId) {
+            if (effectiveDuration > 0L && current.durationMs != effectiveDuration) {
+                _currentMetadata.value = current.copy(durationMs = effectiveDuration)
+                durationChanged = true
+            }
+        } else if (effectiveDuration > 0L) {
             _currentMetadata.value = BrowserMediaMetadata(
                 title = "YouTube Video",
                 artist = "YouTube",
                 album = "Feather Browser",
                 artworkUrl = "",
                 tabId = tabId,
-                durationMs = durationMs
+                durationMs = effectiveDuration
             )
+            durationChanged = true
+            _activeMediaTabId.value = tabId
         }
         val isActive = _playbackState.value == BrowserPlaybackState.PLAYING || _playbackState.value == BrowserPlaybackState.BUFFERING
-        // Position updates arrive ~once per second. The running service reads this state
-        // directly from its own ticker, so only make sure that it is actually running -
-        // posting an intent per tick would churn the service for no benefit.
-        if (!isServiceActive && isActive && _currentMetadata.value != null) {
+        // Duration changes are rare (one per video) and must reach the running service so
+        // its seek bar and metadata are rebuilt. Ordinary position ticks are read by the
+        // service's own ticker, so they do not post an intent.
+        if ((!isServiceActive && isActive && _currentMetadata.value != null) ||
+            (isServiceActive && durationChanged)
+        ) {
             startOrUpdateService(context)
         }
     }

@@ -136,7 +136,10 @@ class BrowserRepository(
         iconName: String,
         colorHex: String,
         fingerprintPreset: String = "DEFAULT",
-        customUserAgent: String = ""
+        customUserAgent: String = "",
+        adBlockEnabled: Boolean = true,
+        blockThirdPartyCookies: Boolean = true,
+        backgroundPlayEnabled: Boolean = true
     ): BrowserProfile = withContext(Dispatchers.IO) {
         val id = "profile_" + System.currentTimeMillis()
         val profile = BrowserProfile(
@@ -145,7 +148,10 @@ class BrowserRepository(
             iconName = iconName,
             colorHex = colorHex,
             fingerprintPreset = fingerprintPreset,
-            customUserAgent = customUserAgent
+            customUserAgent = customUserAgent,
+            adBlockEnabled = adBlockEnabled,
+            blockThirdPartyCookies = blockThirdPartyCookies,
+            backgroundPlayEnabled = backgroundPlayEnabled
         )
         database.profileDao().insertProfile(profile)
         profile
@@ -153,6 +159,19 @@ class BrowserRepository(
 
     suspend fun updateProfile(profile: BrowserProfile) = withContext(Dispatchers.IO) {
         database.profileDao().updateProfile(profile)
+    }
+
+    /**
+     * Applies a settings update against the latest row. Reading and writing in one
+     * suspend call prevents two quick toggles from overwriting each other with stale
+     * profile copies.
+     */
+    suspend fun updateProfileFields(
+        profileId: String,
+        transform: (BrowserProfile) -> BrowserProfile
+    ) = withContext(Dispatchers.IO) {
+        val current = database.profileDao().getProfileById(profileId) ?: return@withContext
+        database.profileDao().updateProfile(transform(current))
     }
 
     private suspend fun deleteDownloadsForProfileInternal(profileId: String) {

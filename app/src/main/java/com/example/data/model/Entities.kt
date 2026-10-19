@@ -1,5 +1,6 @@
 package com.example.data.model
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
@@ -12,7 +13,15 @@ data class BrowserProfile(
     val createdAt: Long = System.currentTimeMillis(),
     val isPrivate: Boolean = false,
     val fingerprintPreset: String = "DEFAULT",
-    val customUserAgent: String = ""
+    val customUserAgent: String = "",
+    // Per-profile privacy defaults. These seed the profile's WebViews and the settings
+    // screen shows/updates the active profile's values.
+    @ColumnInfo(defaultValue = "1")
+    val adBlockEnabled: Boolean = true,
+    @ColumnInfo(defaultValue = "1")
+    val blockThirdPartyCookies: Boolean = true,
+    @ColumnInfo(defaultValue = "1")
+    val backgroundPlayEnabled: Boolean = true
 )
 
 @Entity(tableName = "browser_tabs")

@@ -4,6 +4,7 @@ import android.app.Application
 import android.system.Os
 import com.example.browser.DeviceUtils
 import com.example.media.MediaPlaybackService
+import com.example.privacy.WebViewProfileManager
 import java.io.File
 
 class BrowserApplication : Application() {
@@ -56,6 +57,16 @@ class BrowserApplication : Application() {
             defaultCodeCache.setWritable(true, false)
             defaultCodeCache.setExecutable(true, false)
         } catch (e: Throwable) { }
+
+        // Finish profile deletions that WebKit had to defer because a WebView was still
+        // alive at the time, and drop any private-session cookies from the last run.
+        // Both must happen before the first WebView opens a profile.
+        try {
+            WebViewProfileManager.processPendingDeletions(this)
+            WebViewProfileManager.clearProfileData(this, WebViewProfileManager.PRIVATE_PROFILE_ID)
+        } catch (t: Throwable) {
+            android.util.Log.w("BrowserApp", "Profile cleanup failed", t)
+        }
     }
 
     private fun configureGraphicsEnvironment() {

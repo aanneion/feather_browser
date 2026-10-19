@@ -9,7 +9,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.webkit.URLUtil
-import android.webkit.CookieManager
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -20,10 +19,12 @@ import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
+import com.example.privacy.WebViewProfileManager
 import com.example.weather.WeatherRepository
 import com.example.weather.WeatherUiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -244,6 +245,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val isWeatherFahrenheit = MutableStateFlow(preferences.isWeatherFahrenheit())
     val toolbarPosition = MutableStateFlow(preferences.getToolbarPosition())
 
+    // Bumped when the active profile's fingerprint / user-agent changes. WebViews are
+    // recreated so the new identity is installed at document start instead of lingering
+    // in pages that were already open.
+    val profileIdentityVersion = MutableStateFlow(0)
+
     // Reader Mode State
     private val _readerArticle = MutableStateFlow<ReaderArticle?>(null)
     val readerArticle: StateFlow<ReaderArticle?> = _readerArticle.asStateFlow()
@@ -339,11 +345,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun setAdBlockEnabled(enabled: Boolean) {
         isAdBlockEnabled.value = enabled
         preferences.setAdBlockEnabled(enabled)
+        updateActiveProfile { it.copy(adBlockEnabled = enabled) }
     }
 
     fun setBlockThirdPartyCookies(enabled: Boolean) {
         blockThirdPartyCookies.value = enabled
         preferences.setBlockThirdPartyCookies(enabled)
+        updateActiveProfile { it.copy(blockThirdPartyCookies = enabled) }
     }
 
     fun setHttpsMode(mode: HttpsMode) {
@@ -354,6 +362,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun setBackgroundPlay(enabled: Boolean) {
         enableBackgroundPlay.value = enabled
         preferences.setEnableBackgroundPlay(enabled)
+        updateActiveProfile { it.copy(backgroundPlayEnabled = enabled) }
     }
 
     fun setDownloadProvider(provider: DownloadProvider) {
@@ -469,6 +478,34 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 weatherRepository.refreshWeather(forceNetwork = false)
             }
         }
+
+        // The settings screen edits the active profile, so keep its privacy toggles in
+        // sync when the user switches profiles (or edits the profile from the manager).
+        viewModelScope.launch {
+            currentProfile.collect { profile ->
+                if (profile != null) applyProfileSettings(profile)
+            }
+        }
+    }
+
+    private fun applyProfileSettings(profile: BrowserProfile) {
+        isAdBlockEnabled.value = profile.adBlockEnabled
+        blockThirdPartyCookies.value = profile.blockThirdPartyCookies
+        enableBackgroundPlay.value = profile.backgroundPlayEnabled
+    }
+
+    private fun updateActiveProfile(transform: (BrowserProfile) -> BrowserProfile) {
+        val profileId = _currentProfileId.value
+        if (profileId.isBlank()) return
+        viewModelScope.launch {
+            repository.updateProfileFields(profileId, transform)
+        }
+    }
+
+    /** Clears cookies and site storage for one isolated profile. */
+    fun clearProfileData(profileId: String) {
+        WebViewProfileManager.clearProfileData(context, profileId)
+        Toast.makeText(context, "Cookies and site data cleared", Toast.LENGTH_SHORT).show()
     }
 
     private var tabsJob: kotlinx.coroutines.Job? = null
@@ -504,12 +541,30 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             dismissSheet()
             return
         }
+        val wasPrivate = _isPrivateMode.value
         _isPrivateMode.value = false
         _currentProfileId.value = profileId
+        profiles.value.firstOrNull { it.id == profileId }?.let(::applyProfileSettings)
         _activeTabId.value = ""
         _activeTabState.value = null
         loadTabsForProfile(profileId)
+        if (wasPrivate) clearPrivateSessionAsync()
         dismissSheet()
+    }
+
+    /**
+     * Ends a private session: removes its tab rows, then clears the isolated WebKit
+     * profile once Compose has detached the private WebViews.
+     */
+    private fun clearPrivateSessionAsync() {
+        viewModelScope.launch {
+            repository.clearTabsForProfile(WebViewProfileManager.PRIVATE_PROFILE_ID, true)
+            delay(500)
+            WebViewProfileManager.clearProfileData(
+                context,
+                WebViewProfileManager.PRIVATE_PROFILE_ID
+            )
+        }
     }
 
     fun switchToNextProfile() {
@@ -551,6 +606,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             } else {
                 createNewTab(profileId = _currentProfileId.value, isPrivate = false)
             }
+            // Private browsing ends when the mode is left: discard its tabs and its
+            // isolated cookie/storage jar instead of silently resurrecting them later.
+            clearPrivateSessionAsync()
         }
         dismissSheet()
     }
@@ -566,7 +624,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 displayName = displayName,
                 iconName = iconName,
                 colorHex = colorHex,
-                fingerprintPreset = fingerprintPreset
+                fingerprintPreset = fingerprintPreset,
+                adBlockEnabled = isAdBlockEnabled.value,
+                blockThirdPartyCookies = blockThirdPartyCookies.value,
+                backgroundPlayEnabled = enableBackgroundPlay.value
             )
             switchProfile(newProfile.id)
         }
@@ -574,17 +635,29 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun updateProfile(profile: BrowserProfile) {
         viewModelScope.launch {
+            val previous = profiles.value.firstOrNull { it.id == profile.id }
             repository.updateProfile(profile)
+            val identityChanged = previous != null &&
+                (previous.fingerprintPreset != profile.fingerprintPreset ||
+                    previous.customUserAgent != profile.customUserAgent)
+            if (identityChanged && _currentProfileId.value == profile.id) {
+                profileIdentityVersion.value += 1
+            }
         }
     }
 
     fun deleteProfile(profileId: String) {
-        if (profileId == "default_personal") return // Protect default profile
+        if (profileId == WebViewProfileManager.DEFAULT_PROFILE_ID) return // Protect default profile
         viewModelScope.launch {
             repository.deleteProfile(profileId)
             if (_currentProfileId.value == profileId) {
-                switchProfile("default_personal")
+                switchProfile(WebViewProfileManager.DEFAULT_PROFILE_ID)
             }
+            // Let Compose dispose the profile's WebViews before asking WebKit to delete
+            // the profile. If it is still open the manager clears it and retries next
+            // launch, so the user's data is never left behind in either case.
+            delay(600)
+            WebViewProfileManager.deleteProfile(context, profileId)
         }
     }
 
@@ -1298,7 +1371,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val request = DownloadManager.Request(Uri.parse(url)).apply {
                 setMimeType(resolvedMimeType)
                 addRequestHeader("User-Agent", userAgent)
-                CookieManager.getInstance().getCookie(url)?.let { addRequestHeader("Cookie", it) }
+                val downloadProfileId = if (_isPrivateMode.value) {
+                    WebViewProfileManager.PRIVATE_PROFILE_ID
+                } else {
+                    _currentProfileId.value
+                }
+                WebViewProfileManager.cookieForUrl(downloadProfileId, url)
+                    ?.let { addRequestHeader("Cookie", it) }
                 setDescription("Downloading $filename")
                 setTitle(filename)
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)

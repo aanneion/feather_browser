@@ -23,10 +23,15 @@ object FingerprintScriptGenerator {
             platform.contains("Chrome") -> "Chrome OS"
             else -> "Android"
         }
+        val presetKey = preset.name + "_" + Integer.toHexString(customUserAgent.orEmpty().hashCode())
 
         return """
         (function() {
             try {
+                // Re-injecting the same identity is a no-op; switching profiles applies the
+                // new identity immediately without stacking duplicate property descriptors.
+                if (window.__feather_fp_key === '$presetKey') return;
+                window.__feather_fp_key = '$presetKey';
                 const targetPlatform = '$platform';
                 const targetVendor = '$vendor';
                 const targetCores = $cores;
@@ -118,17 +123,28 @@ object FingerprintScriptGenerator {
      * Injects a background audio/video playback shim that prevents YouTube, SoundCloud, Spotify,
      * and HTML5 video players from pausing when switching tabs or backgrounding the app.
      */
-    fun generateBackgroundPlayScript(): String {
+    fun generateBackgroundPlayScript(
+        includeBackgroundPlay: Boolean = true,
+        includeMediaSession: Boolean = true
+    ): String {
+        val includeBg = if (includeBackgroundPlay) "true" else "false"
+        val includeMedia = if (includeMediaSession) "true" else "false"
         return """
         (function() {
             try {
-                if (window.__feather_bg_play_active) return;
-                window.__feather_bg_play_active = true;
+                const featherIncludeBg = $includeBg;
+                const featherIncludeMedia = $includeMedia;
 
-                // -----------------------------------------------------------------------------
-                // 1. Spoof the Page Visibility API so media sites report visible and focused
-                // -----------------------------------------------------------------------------
-                ['hidden', 'webkitHidden'].forEach(function(prop) {
+                // The background-play shim and the media-session bridge are independent.
+                // Installing the media bridge must never spoof page visibility: doing so
+                // makes ordinary foreground tabs report as visible while hidden.
+                if (featherIncludeBg && !window.__feather_bg_play_active) {
+                    window.__feather_bg_play_active = true;
+
+                    // -----------------------------------------------------------------------------
+                    // 1. Spoof the Page Visibility API so media sites report visible and focused
+                    // -----------------------------------------------------------------------------
+                    ['hidden', 'webkitHidden'].forEach(function(prop) {
                     try {
                         Object.defineProperty(document, prop, { get: function() { return false; }, configurable: true, enumerable: true });
                         Object.defineProperty(Document.prototype, prop, { get: function() { return false; }, configurable: true, enumerable: true });
@@ -193,7 +209,12 @@ object FingerprintScriptGenerator {
                         };
                         window.IntersectionObserver.prototype = OrigObserver.prototype;
                     }
-                } catch(e) {}
+                    } catch(e) {}
+                }
+
+                if (!featherIncludeMedia) return;
+                if (window.__feather_media_active) return;
+                window.__feather_media_active = true;
 
                 // -----------------------------------------------------------------------------
                 // 3. Media element helpers
@@ -266,6 +287,28 @@ object FingerprintScriptGenerator {
                         if (details && details.videoId) return details.videoId;
                     } catch(e) {}
                     return '';
+                }
+
+                function isAdShowingNow() {
+                    try {
+                        const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (player && player.classList) {
+                            if (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting')) return true;
+                        }
+                        // Only trust the player's own ad state. Overlay/module selectors can
+                        // remain in the DOM during normal playback on YouTube.
+                        return !!document.querySelector('.html5-video-player.ad-showing, .html5-video-player.ad-interrupting');
+                    } catch(e) {}
+                    return false;
+                }
+
+                function isAdActive() {
+                    return window.__feather_yt_ad_active === true || isAdShowingNow();
+                }
+
+                function isRecentAdEnd() {
+                    const endedAt = window.__feather_last_ad_end_at || 0;
+                    return endedAt > 0 && (Date.now() - endedAt) < 1500;
                 }
 
                 function getMediaSessionArtwork() {
@@ -356,6 +399,10 @@ object FingerprintScriptGenerator {
                 function notifyMediaBridge(isPlaying) {
                     try {
                         if (!window.FeatherMediaBridge) return;
+                        // Never publish ad metadata, ad duration, or ad playback state. The
+                        // notification must keep showing the content video while a preroll
+                        // or midroll is being skipped.
+                        if (isAdActive()) return;
                         if (isPlaying) {
                             wasActivePlayback = true;
                             window.FeatherMediaBridge.updateMetadata(
@@ -381,6 +428,7 @@ object FingerprintScriptGenerator {
 
                 function pushPosition(positionSeconds, durationSeconds, force) {
                     try {
+                        if (isAdActive()) return;
                         if (!window.FeatherMediaBridge || typeof window.FeatherMediaBridge.updateProgress !== 'function') return;
                         const now = Date.now();
                         const posRounded = Math.max(0, Math.round(positionSeconds));
@@ -446,7 +494,7 @@ object FingerprintScriptGenerator {
                                         try { desc.set.call(this, val); } catch(e) {}
                                     }
                                     try {
-                                        if (window.FeatherMediaBridge && val) {
+                                        if (window.FeatherMediaBridge && val && !isAdActive()) {
                                             // Thumbnail comes from the resolver, which validates
                                             // the session artwork against the video playing now.
                                             window.FeatherMediaBridge.updateMetadata(
@@ -706,17 +754,21 @@ object FingerprintScriptGenerator {
                 let lastReportedTitle = '';
                 let lastReportedArt = '';
                 let lastReportedVideoId = '';
+                let lastAdActive = false;
 
                 function hookMediaElement(el) {
                     if (!el || el.__feather_monitored) return;
                     el.__feather_monitored = true;
 
                     function handlePlay() {
+                        if (isAdActive()) return;
                         wasActivePlayback = true;
                         notifyMediaBridge(true);
+                        publishPosition(true);
                     }
 
                     function reportRate() {
+                        if (isAdActive()) return;
                         try {
                             if (window.FeatherMediaBridge && typeof window.FeatherMediaBridge.updatePlaybackRate === 'function') {
                                 window.FeatherMediaBridge.updatePlaybackRate(el.playbackRate);
@@ -736,6 +788,7 @@ object FingerprintScriptGenerator {
                         publishPosition(true);
                     });
                     el.addEventListener('timeupdate', function() {
+                        if (isAdActive()) return;
                         if (!el.paused && !el.ended && !wasActivePlayback) {
                             wasActivePlayback = true;
                             notifyMediaBridge(true);
@@ -744,6 +797,7 @@ object FingerprintScriptGenerator {
 
                     el.addEventListener('pause', function() {
                         setTimeout(function() {
+                            if (isAdActive()) return;
                             const anyPlaying = getMediaElements().some(function(m) {
                                 return !m.paused && !m.ended;
                             });
@@ -754,6 +808,13 @@ object FingerprintScriptGenerator {
                     });
 
                     el.addEventListener('ended', function() {
+                        // YouTube fires `ended` on the ad <video> as the ad is torn down.
+                        // Treating that as the content ending stopped the notification and
+                        // made it restart a moment later; wait for real content completion.
+                        if (isAdActive() || isRecentAdEnd()) {
+                            scheduleTrackChecks();
+                            return;
+                        }
                         wasActivePlayback = false;
                         if (window.FeatherMediaBridge) {
                             window.FeatherMediaBridge.onMediaEnded();
@@ -763,6 +824,19 @@ object FingerprintScriptGenerator {
 
                 const monitorMedia = function() {
                     try {
+                        if (isAdActive()) {
+                            lastAdActive = true;
+                            return;
+                        }
+                        if (lastAdActive) {
+                            lastAdActive = false;
+                            wasActivePlayback = true;
+                            setTimeout(function() {
+                                publishPosition(true);
+                                notifyMediaBridge(isPlayingNow());
+                            }, 80);
+                        }
+
                         const els = getMediaElements();
                         let anyPlaying = false;
                         els.forEach(function(el) {
@@ -805,6 +879,20 @@ object FingerprintScriptGenerator {
         })();
         """.trimIndent()
     }
+
+    /**
+     * Media-session bridge only. It reports playback to the notification service without
+     * pretending the page is visible, so background-play remains an explicit opt-in.
+     */
+    fun generateMediaSessionScript(): String =
+        generateBackgroundPlayScript(includeBackgroundPlay = false, includeMediaSession = true)
+
+    /**
+     * Background-play visibility shim only. Media reporting is installed separately and is
+     * always active, regardless of the background-play setting.
+     */
+    fun generateBackgroundPlayShimScript(): String =
+        generateBackgroundPlayScript(includeBackgroundPlay = true, includeMediaSession = false)
 
     /**
      * Injects CSS and JS overrides to ensure websites adhere to the browser's theme setting.

@@ -60,6 +60,7 @@ fun BrowserScreen(
     val blockThirdPartyCookies by viewModel.blockThirdPartyCookies.collectAsStateWithLifecycle()
     val httpsMode by viewModel.httpsMode.collectAsStateWithLifecycle()
     val enableBackgroundPlay by viewModel.enableBackgroundPlay.collectAsStateWithLifecycle()
+    val profileIdentityVersion by viewModel.profileIdentityVersion.collectAsStateWithLifecycle()
     val downloadProvider by viewModel.downloadProvider.collectAsStateWithLifecycle()
     val isWeatherEnabled by viewModel.isWeatherOnNewTab.collectAsStateWithLifecycle()
     val isWeatherFahrenheit by viewModel.isWeatherFahrenheit.collectAsStateWithLifecycle()
@@ -389,6 +390,8 @@ fun BrowserScreen(
                                     viewModel = viewModel,
                                     actions = viewModel.webViewActionEvent,
                                     isActive = isActive,
+                                    isPrivate = tab.isPrivate,
+                                    profileIdentityVersion = profileIdentityVersion,
                                     isAddressBarEditing = isAddressBarEditing,
                                     onDismissAddressBar = {
                                         if (isAddressBarEditing) {
@@ -597,6 +600,7 @@ fun BrowserScreen(
                 onCreateProfile = { name, icon, color, preset -> viewModel.createNewProfile(name, icon, color, preset) },
                 onUpdateProfile = { viewModel.updateProfile(it) },
                 onDeleteProfile = { viewModel.deleteProfile(it) },
+                onClearProfileData = { viewModel.clearProfileData(it) },
                 onDismiss = { viewModel.dismissSheet() }
             )
         } else if (activeSheet == ActiveSheet.PRIVACY_SHIELD) {

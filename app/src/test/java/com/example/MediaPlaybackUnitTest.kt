@@ -127,6 +127,85 @@ class MediaPlaybackUnitTest {
     }
 
     @Test
+    fun mediaSessionScript_isIndependentFromBackgroundPlay() {
+        val mediaScript = FingerprintScriptGenerator.generateMediaSessionScript()
+        val backgroundShim = FingerprintScriptGenerator.generateBackgroundPlayShimScript()
+
+        // The notification bridge must always exist, even when background play is off.
+        assertTrue(mediaScript.contains("const featherIncludeBg = false;"))
+        assertTrue(mediaScript.contains("const featherIncludeMedia = true;"))
+        assertTrue(mediaScript.contains("FeatherMediaBridge"))
+        assertTrue(mediaScript.contains("window.__feather_media_active = true;"))
+
+        // The visibility/focus spoof is a separate, opt-in script.
+        assertTrue(backgroundShim.contains("const featherIncludeBg = true;"))
+        assertTrue(backgroundShim.contains("const featherIncludeMedia = false;"))
+        assertTrue(backgroundShim.contains("visibilityState"))
+
+        // Both scripts understand YouTube's ad state, so an ad never reaches the
+        // notification as a separate track.
+        assertTrue(mediaScript.contains("window.__feather_yt_ad_active"))
+        assertTrue(mediaScript.contains("window.__feather_last_ad_end_at"))
+        assertTrue(mediaScript.contains("isRecentAdEnd"))
+    }
+
+    @Test
+    fun youTubeAdBlockScript_publishesAdTransitionsForTheMediaBridge() {
+        val script = YouTubeAdBlocker.getYouTubeAdBlockScript()
+        assertTrue(script.contains("window.__feather_yt_ad_active = true;"))
+        assertTrue(script.contains("window.__feather_yt_ad_active = false;"))
+        assertTrue(script.contains("window.__feather_last_ad_end_at = Date.now();"))
+    }
+
+    @Test
+    fun mediaSessionManager_resetsStaleDurationWhenTheTrackChanges() {
+        val tabId = "tab_duration_reset"
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "First Video",
+            artist = "Channel A",
+            album = "YouTube",
+            artworkUrl = "https://i.ytimg.com/vi/first/hq720.jpg",
+            durationMs = 600_000L
+        )
+        assertEquals(600_000L, MediaSessionManager.currentMetadata.value?.durationMs)
+
+        // New video, no duration reported yet: the old 10-minute length must not leak.
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "Second Video",
+            artist = "Channel B",
+            album = "YouTube",
+            artworkUrl = "https://i.ytimg.com/vi/second/hq720.jpg"
+        )
+        assertEquals(0L, MediaSessionManager.currentMetadata.value?.durationMs)
+
+        MediaSessionManager.updateProgress(context, tabId, 90_000L, 120_000L)
+        assertEquals(90_000L, MediaSessionManager.currentPositionMs.value)
+        assertEquals(120_000L, MediaSessionManager.currentMetadata.value?.durationMs)
+    }
+
+    @Test
+    fun mediaSessionManager_clampsProgressToTheReportedDuration() {
+        val tabId = "tab_progress_clamp"
+        MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)
+        MediaSessionManager.updateMetadata(
+            context = context,
+            tabId = tabId,
+            title = "Clamp Test",
+            artist = "Channel",
+            album = "YouTube",
+            artworkUrl = "",
+            durationMs = 60_000L
+        )
+        MediaSessionManager.updateProgress(context, tabId, 75_000L, 60_000L)
+        assertEquals(60_000L, MediaSessionManager.currentPositionMs.value)
+        MediaSessionManager.stopPlayback(context)
+    }
+
+    @Test
     fun mediaSessionManager_tracksPositionAndDurationForTheSystemSeekBar() {
         val tabId = "tab_yt_progress"
         MediaSessionManager.updatePlaybackState(context, tabId, BrowserPlaybackState.PLAYING)

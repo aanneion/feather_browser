@@ -128,6 +128,7 @@ class MediaPlaybackService : Service() {
     private var lastPushedPositionMs = -1L
     private var lastPushedState = -1
     private var lastPushedRate = -1f
+    private var lastPushedDurationMs = -1L
     private var tickerRunning = false
     private val progressTicker = object : Runnable {
         override fun run() {
@@ -361,7 +362,9 @@ class MediaPlaybackService : Service() {
         val album = metadata?.album?.ifBlank { "Feather Browser" } ?: "Feather Browser"
         val artworkUrl = metadata?.artworkUrl?.trim() ?: ""
         val durationMs = metadata?.durationMs ?: 0L
-        val positionMs = MediaSessionManager.currentPositionMs.value
+        val positionMs = MediaSessionManager.currentPositionMs.value.let {
+            if (durationMs > 0L) it.coerceIn(0L, durationMs) else it.coerceAtLeast(0L)
+        }
 
         if (artworkUrl.isNotBlank()) {
             if (artworkUrl != cachedArtworkUrl) {
@@ -383,12 +386,13 @@ class MediaPlaybackService : Service() {
 
         // Update MediaSession state (position + duration drive the system seek bar)
         val isBuffering = MediaSessionManager.playbackState.value == BrowserPlaybackState.BUFFERING
-        val playbackState = buildPlaybackState(isPlaying, isBuffering, positionMs)
+        val playbackState = buildPlaybackState(isPlaying, isBuffering, positionMs, durationMs)
         mediaSession?.setPlaybackState(playbackState)
         mediaSession?.isActive = true
         lastPushedPositionMs = positionMs
         lastPushedState = playbackState.state
         lastPushedRate = MediaSessionManager.currentPlaybackRate.value
+        lastPushedDurationMs = durationMs
 
         // Keep the position flowing between the once-per-second reports from the page.
         // Audio focus is NOT requested here on purpose (see the note at the top of the
@@ -469,7 +473,12 @@ class MediaPlaybackService : Service() {
                         }
                         mediaSession?.setMetadata(updatedMetaBuilder.build())
                         mediaSession?.setPlaybackState(
-                            buildPlaybackState(currentIsPlaying, currentIsBuffering, latestPosition)
+                            buildPlaybackState(
+                                currentIsPlaying,
+                                currentIsBuffering,
+                                latestPosition,
+                                latestDuration
+                            )
                         )
 
                         val updatedNotification = buildNotification(
@@ -493,7 +502,12 @@ class MediaPlaybackService : Service() {
      * to render the seek bar in the media notification / lock screen player, so both must be
      * real values (`PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN` hides the bar entirely).
      */
-    private fun buildPlaybackState(isPlaying: Boolean, isBuffering: Boolean, positionMs: Long): PlaybackStateCompat {
+    private fun buildPlaybackState(
+        isPlaying: Boolean,
+        isBuffering: Boolean,
+        positionMs: Long,
+        durationMs: Long = 0L
+    ): PlaybackStateCompat {
         val state = when {
             isBuffering -> PlaybackStateCompat.STATE_BUFFERING
             isPlaying -> PlaybackStateCompat.STATE_PLAYING
@@ -501,6 +515,11 @@ class MediaPlaybackService : Service() {
         }
         val rate = MediaSessionManager.currentPlaybackRate.value.takeIf { it.isFinite() && it > 0f } ?: 1f
         val speed = if (isPlaying || isBuffering) rate else 0f
+        val safePosition = if (durationMs > 0L) {
+            positionMs.coerceIn(0L, durationMs)
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
         return PlaybackStateCompat.Builder()
             .setActions(
                 PlaybackStateCompat.ACTION_PLAY or
@@ -514,7 +533,7 @@ class MediaPlaybackService : Service() {
                 PlaybackStateCompat.ACTION_REWIND or
                 PlaybackStateCompat.ACTION_SET_PLAYBACK_SPEED
             )
-            .setState(state, positionMs.coerceAtLeast(0L), speed)
+            .setState(state, safePosition, speed)
             .build()
     }
 
@@ -531,6 +550,7 @@ class MediaPlaybackService : Service() {
         lastPushedPositionMs = -1L
         lastPushedState = -1
         lastPushedRate = -1f
+        lastPushedDurationMs = -1L
     }
 
     /**
@@ -543,15 +563,25 @@ class MediaPlaybackService : Service() {
         val state = MediaSessionManager.playbackState.value
         val isPlaying = state == BrowserPlaybackState.PLAYING
         val isBuffering = state == BrowserPlaybackState.BUFFERING
-        val positionMs = MediaSessionManager.currentPositionMs.value
+        val durationMs = MediaSessionManager.currentMetadata.value?.durationMs ?: 0L
+        val positionMs = MediaSessionManager.currentPositionMs.value.let {
+            if (durationMs > 0L) it.coerceIn(0L, durationMs) else it.coerceAtLeast(0L)
+        }
         val rate = MediaSessionManager.currentPlaybackRate.value
         val compatState = when {
             isBuffering -> PlaybackStateCompat.STATE_BUFFERING
             isPlaying -> PlaybackStateCompat.STATE_PLAYING
             else -> PlaybackStateCompat.STATE_PAUSED
         }
+        // A duration change means the notification metadata (and its seek bar) must be
+        // rebuilt, not just the playback state. This is what fixes the first second of a
+        // new video showing the previous video's length.
+        if (durationMs != lastPushedDurationMs) {
+            updateNotificationAndSession()
+            return
+        }
         if (positionMs == lastPushedPositionMs && compatState == lastPushedState && rate == lastPushedRate) return
-        session.setPlaybackState(buildPlaybackState(isPlaying, isBuffering, positionMs))
+        session.setPlaybackState(buildPlaybackState(isPlaying, isBuffering, positionMs, durationMs))
         lastPushedPositionMs = positionMs
         lastPushedState = compatState
         lastPushedRate = rate
