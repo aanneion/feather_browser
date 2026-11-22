@@ -284,7 +284,11 @@ fun NewTabPage(
                     rowItems.forEach { shortcut ->
                         val shortcutColor = remember(shortcut.url) { getShortcutColor(shortcut.url) }
                         val shortcutInitial = remember(shortcut.title, shortcut.url) { getShortcutInitial(shortcut.title, shortcut.url) }
-                        val faviconBitmap by rememberFavicon(shortcut.url)
+                        val faviconBitmap by rememberFavicon(
+                            url = shortcut.url,
+                            profileId = currentProfile?.id ?: "default_personal",
+                            isPrivate = isPrivateMode
+                        )
 
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,

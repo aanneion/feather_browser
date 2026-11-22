@@ -21,7 +21,16 @@ data class BrowserProfile(
     @ColumnInfo(defaultValue = "1")
     val blockThirdPartyCookies: Boolean = true,
     @ColumnInfo(defaultValue = "1")
-    val backgroundPlayEnabled: Boolean = true
+    val backgroundPlayEnabled: Boolean = true,
+    // Per-profile isolation & anti-fingerprinting extensions (schema v6)
+    @ColumnInfo(defaultValue = "0")
+    val fingerprintSeed: Long = 0L,
+    @ColumnInfo(defaultValue = "1")
+    val webRtcProtectionEnabled: Boolean = true,
+    @ColumnInfo(defaultValue = "")
+    val proxyUrl: String = "",
+    @ColumnInfo(defaultValue = "0")
+    val requireDeviceAuth: Boolean = false
 )
 
 @Entity(tableName = "browser_tabs")

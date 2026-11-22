@@ -1,5 +1,6 @@
 package com.example.weather
 
+import com.example.privacy.ProfileProxyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -19,6 +20,8 @@ class OpenMeteoWeatherProvider : WeatherProvider {
         return withContext(Dispatchers.IO) {
             var connection: HttpURLConnection? = null
             try {
+                val proxy = ProfileProxyManager.getActiveJavaNetProxy() ?: return@withContext null
+
                 // Open-Meteo URL requesting current temperature, apparent_temperature, relative_humidity_2m, weather_code, wind_speed_10m, is_day
                 val urlString = String.format(
                     Locale.US,
@@ -28,7 +31,7 @@ class OpenMeteoWeatherProvider : WeatherProvider {
                 )
 
                 val url = URL(urlString)
-                connection = (url.openConnection() as HttpURLConnection).apply {
+                connection = (url.openConnection(proxy) as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 4000
                     readTimeout = 4000

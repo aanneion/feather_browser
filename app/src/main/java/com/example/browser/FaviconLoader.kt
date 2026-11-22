@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import com.example.privacy.ProfileProxyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -13,62 +14,87 @@ import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Lightweight in-memory and network favicon loader.
- * Uses Google S2 / DuckDuckGo high-res Favicon resolver with fallback to website direct /favicon.ico.
- * Zero heavy external dependencies.
+ * Profile-partitioned, privacy-respecting Favicon Loader.
+ *
+ * - Partitioned by `(profileId, domain)` so cached favicons never cross-pollinate or reveal
+ *   visited domains across isolated profiles.
+ * - Fetches directly from the origin site (`https://<domain>/favicon.ico`) routed through the
+ *   active profile's proxy (`ProfileProxyManager`) — NEVER sending browsing domains to Google S2
+ *   or DuckDuckGo third-party favicon servers!
+ * - Suppressed completely in Private Mode (`isPrivate = true`).
  */
 object FaviconLoader {
-    // Cache storing loaded icons or null sentinels safely
     private val memoryCache = ConcurrentHashMap<String, ImageBitmap>()
-    private val failedDomains = ConcurrentHashMap.newKeySet<String>()
+    private val failedKeys = ConcurrentHashMap.newKeySet<String>()
 
-    suspend fun loadFavicon(url: String): ImageBitmap? {
+    private fun cacheKey(profileId: String, domain: String): String = "${profileId.ifBlank { "default_personal" }}|$domain"
+
+    fun clearForProfile(profileId: String) {
+        val prefix = "${profileId}|"
+        memoryCache.keys.removeIf { it.startsWith(prefix) }
+        failedKeys.removeIf { it.startsWith(prefix) }
+    }
+
+    fun clearAll() {
+        memoryCache.clear()
+        failedKeys.clear()
+    }
+
+    fun cacheFromWebViewIcon(profileId: String, url: String?, icon: Bitmap?, isPrivate: Boolean = false) {
+        if (isPrivate || url.isNullOrBlank() || icon == null) return
+        val domain = UrlUtils.extractDomain(url).trim().lowercase()
+        if (domain.isBlank() || domain == "about:blank" || domain == "localhost") return
+        if (icon.width > 1 && icon.height > 1) {
+            memoryCache[cacheKey(profileId, domain)] = icon.asImageBitmap()
+        }
+    }
+
+    suspend fun loadFavicon(
+        url: String,
+        profileId: String = "default_personal",
+        isPrivate: Boolean = false
+    ): ImageBitmap? {
+        if (isPrivate) return null
         val domain = UrlUtils.extractDomain(url).trim().lowercase()
         if (domain.isBlank() || domain == "about:blank" || domain == "localhost") return null
 
-        // Check cache
-        val cached = memoryCache[domain]
-        if (cached != null) {
-            return cached
-        }
-        if (failedDomains.contains(domain)) {
-            return null
-        }
+        val key = cacheKey(profileId, domain)
+        memoryCache[key]?.let { return it }
+        if (failedKeys.contains(key)) return null
 
         return withContext(Dispatchers.IO) {
             try {
-                val bitmap = fetchFaviconBitmap(domain)
+                val bitmap = fetchDirectOriginFavicon(domain)
                 val imageBitmap = bitmap?.asImageBitmap()
                 if (imageBitmap != null) {
-                    memoryCache[domain] = imageBitmap
+                    memoryCache[key] = imageBitmap
                     imageBitmap
                 } else {
-                    failedDomains.add(domain)
+                    failedKeys.add(key)
                     null
                 }
-            } catch (e: Throwable) {
-                failedDomains.add(domain)
+            } catch (_: Throwable) {
+                failedKeys.add(key)
                 null
             }
         }
     }
 
-    private fun fetchFaviconBitmap(domain: String): Bitmap? {
-        // Try Google S2 Favicon service with 128px high-resolution icon
+    private fun fetchDirectOriginFavicon(domain: String): Bitmap? {
         val endpoints = listOf(
-            "https://www.google.com/s2/favicons?domain=$domain&sz=128",
-            "https://icons.duckduckgo.com/ip3/$domain.ico",
-            "https://$domain/favicon.ico"
+            "https://$domain/favicon.ico",
+            "https://$domain/apple-touch-icon.png"
         )
+        val proxy = ProfileProxyManager.getActiveJavaNetProxy()
 
         for (endpoint in endpoints) {
             var connection: HttpURLConnection? = null
             var inputStream: InputStream? = null
             try {
                 val url = URL(endpoint)
-                connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 3500
-                connection.readTimeout = 3500
+                connection = url.openConnection(proxy) as HttpURLConnection
+                connection.connectTimeout = 3000
+                connection.readTimeout = 3000
                 connection.instanceFollowRedirects = true
                 connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Android; Mobile)")
                 connection.connect()
@@ -80,12 +106,12 @@ object FaviconLoader {
                         return decoded
                     }
                 }
-            } catch (e: Exception) {
-                // Try next endpoint
+            } catch (_: Exception) {
+                // Try next direct origin path
             } finally {
                 try {
                     inputStream?.close()
-                } catch (e: Exception) { }
+                } catch (_: Exception) { }
                 connection?.disconnect()
             }
         }
@@ -94,10 +120,14 @@ object FaviconLoader {
 }
 
 @Composable
-fun rememberFavicon(url: String): State<ImageBitmap?> {
-    val faviconState = remember(url) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(url) {
-        faviconState.value = FaviconLoader.loadFavicon(url)
+fun rememberFavicon(
+    url: String,
+    profileId: String = "default_personal",
+    isPrivate: Boolean = false
+): State<ImageBitmap?> {
+    val faviconState = remember(url, profileId, isPrivate) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(url, profileId, isPrivate) {
+        faviconState.value = FaviconLoader.loadFavicon(url, profileId = profileId, isPrivate = isPrivate)
     }
     return faviconState
 }

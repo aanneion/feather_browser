@@ -1,5 +1,6 @@
 package com.example.browser
 
+import com.example.privacy.ProfileProxyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -37,8 +38,11 @@ object SearchSuggestionService {
     suspend fun getSuggestions(
         query: String,
         searchEngine: SearchEngine,
-        maxResults: Int = 7
+        maxResults: Int = 7,
+        isPrivateMode: Boolean = false
     ): List<String> {
+        // Never leak keystroke-by-keystroke queries to remote autocomplete servers in Private Mode
+        if (isPrivateMode) return emptyList()
         val trimmedQuery = query.trim()
         if (trimmedQuery.isBlank() || maxResults <= 0) return emptyList()
 
@@ -52,7 +56,8 @@ object SearchSuggestionService {
                     SearchEngine.BING -> BING_SUGGEST_URL + encodedQuery
                     SearchEngine.BRAVE -> BRAVE_SUGGEST_URL + encodedQuery
                 }
-                connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                val proxy = ProfileProxyManager.getActiveJavaNetProxy()
+                connection = (URL(endpoint).openConnection(proxy) as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 2500
                     readTimeout = 2500

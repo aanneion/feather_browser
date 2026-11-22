@@ -20,7 +20,7 @@ import com.example.data.model.*
         CustomShortcut::class,
         DismissedShortcut::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -45,6 +45,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE browser_profiles ADD COLUMN fingerprintSeed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE browser_profiles ADD COLUMN webRtcProtectionEnabled INTEGER NOT NULL DEFAULT 1")
+                db.execSQL("ALTER TABLE browser_profiles ADD COLUMN proxyUrl TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE browser_profiles ADD COLUMN requireDeviceAuth INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -52,7 +61,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "lightweight_browser.db"
                 )
-                    .addMigrations(MIGRATION_4_5)
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

@@ -42,13 +42,13 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migration4To5_preservesProfilesAndAddsPrivacyDefaults() = runBlocking {
+    fun migration4To6_preservesProfilesAndAddsPrivacyAndIsolationDefaults() = runBlocking {
         database = Room.databaseBuilder(
             context,
             AppDatabase::class.java,
             "feather_migration_test.db"
         )
-            .addMigrations(AppDatabase.MIGRATION_4_5)
+            .addMigrations(AppDatabase.MIGRATION_4_5, AppDatabase.MIGRATION_5_6)
             .allowMainThreadQueries()
             .build()
 
@@ -63,6 +63,9 @@ class AppDatabaseMigrationTest {
         assertTrue("New ad-block default must be enabled", profile.adBlockEnabled)
         assertTrue("New cookie default must be enabled", profile.blockThirdPartyCookies)
         assertTrue("New background-play default must be enabled", profile.backgroundPlayEnabled)
+        assertTrue("New WebRTC leak shield default must be enabled", profile.webRtcProtectionEnabled)
+        assertEquals("", profile.proxyUrl)
+        assertEquals(false, profile.requireDeviceAuth)
     }
 
     private fun createVersion4Database(file: File) {

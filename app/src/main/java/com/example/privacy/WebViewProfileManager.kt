@@ -116,7 +116,40 @@ object WebViewProfileManager {
         }
     }
 
-    /** Clears cookies for every profile, used by "Clear browsing data". */
+    /** Clears cookies for a single profile without touching other profiles. */
+    fun clearProfileCookies(profileId: String) {
+        try {
+            if (isDefaultProfile(profileId)) {
+                clearDefaultCookies()
+                return
+            }
+            if (!isSupported()) return
+            val name = profileNameFor(profileId)
+            val profile = runCatching { ProfileStore.getInstance().getProfile(name) }.getOrNull() ?: return
+            profile.cookieManager.removeAllCookies(null)
+            profile.cookieManager.flush()
+        } catch (t: Throwable) {
+            android.util.Log.w("FeatherProfiles", "Unable to clear cookies for $profileId", t)
+        }
+    }
+
+    /** Clears site storage (localStorage, IndexedDB, service workers) for a single profile. */
+    fun clearProfileSiteData(profileId: String) {
+        try {
+            if (isDefaultProfile(profileId)) {
+                clearDefaultSiteData()
+                return
+            }
+            if (!isSupported()) return
+            val name = profileNameFor(profileId)
+            val profile = runCatching { ProfileStore.getInstance().getProfile(name) }.getOrNull() ?: return
+            profile.webStorage.deleteAllData()
+        } catch (t: Throwable) {
+            android.util.Log.w("FeatherProfiles", "Unable to clear site data for $profileId", t)
+        }
+    }
+
+    /** Clears cookies for every profile, used by "Clear browsing data (All profiles)". */
     fun clearAllCookies() {
         try {
             clearDefaultCookies()
