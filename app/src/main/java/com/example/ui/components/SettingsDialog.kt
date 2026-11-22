@@ -894,14 +894,23 @@ private fun GlassySettingsCard(
 
 @Composable
 fun ClearBrowsingDataDialog(
-    onConfirm: (clearHistory: Boolean, clearCookies: Boolean, clearCache: Boolean, clearSiteData: Boolean, clearDownloads: Boolean) -> Unit,
+    activeProfileName: String = "Active Profile",
+    onConfirm: (
+        clearHistory: Boolean,
+        clearCookies: Boolean,
+        clearCache: Boolean,
+        clearSiteData: Boolean,
+        clearDownloads: Boolean,
+        currentProfileOnly: Boolean
+    ) -> Unit,
     onDismiss: () -> Unit
 ) {
     var clearHistory by remember { mutableStateOf(true) }
     var clearCookies by remember { mutableStateOf(true) }
     var clearCache by remember { mutableStateOf(true) }
-    var clearSiteData by remember { mutableStateOf(false) }
+    var clearSiteData by remember { mutableStateOf(true) }
     var clearDownloads by remember { mutableStateOf(false) }
+    var currentProfileOnly by remember { mutableStateOf(true) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -909,11 +918,36 @@ fun ClearBrowsingDataDialog(
         text = {
             Column {
                 Text(
+                    text = "Profile scope:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    FilterChip(
+                        selected = currentProfileOnly,
+                        onClick = { currentProfileOnly = true },
+                        label = { Text(activeProfileName, fontSize = 12.sp, maxLines = 1) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(
+                        selected = !currentProfileOnly,
+                        onClick = { currentProfileOnly = false },
+                        label = { Text("All Profiles", fontSize = 12.sp) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
                     text = "Select the data categories you would like to purge:",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -931,12 +965,22 @@ fun ClearBrowsingDataDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { clearCookies = !clearCookies }
+                        .clickable {
+                            val next = !clearCookies
+                            clearCookies = next
+                            clearSiteData = next
+                        }
                         .padding(vertical = 4.dp)
                 ) {
-                    Checkbox(checked = clearCookies, onCheckedChange = { clearCookies = it })
+                    Checkbox(
+                        checked = clearCookies,
+                        onCheckedChange = {
+                            clearCookies = it
+                            clearSiteData = it
+                        }
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Cookies & Site Data", fontSize = 14.sp)
+                    Text("Cookies & Site Storage", fontSize = 14.sp)
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -960,13 +1004,22 @@ fun ClearBrowsingDataDialog(
                 ) {
                     Checkbox(checked = clearDownloads, onCheckedChange = { clearDownloads = it })
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Download History Records", fontSize = 14.sp)
+                    Text("Downloads & Offline Archives", fontSize = 14.sp)
                 }
             }
         },
         confirmButton = {
             Button(
-                onClick = { onConfirm(clearHistory, clearCookies, clearCache, clearSiteData, clearDownloads) },
+                onClick = {
+                    onConfirm(
+                        clearHistory,
+                        clearCookies,
+                        clearCache,
+                        clearSiteData,
+                        clearDownloads,
+                        currentProfileOnly
+                    )
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
             ) {
                 Text("Clear Data")

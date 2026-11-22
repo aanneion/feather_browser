@@ -121,10 +121,10 @@ fun AddressBar(
     }
 
     // Real-time search suggestions: Fetch query predictions from the selected search engine as the user types
-    LaunchedEffect(inputText, isEditing, searchEngine) {
+    LaunchedEffect(inputText, isEditing, searchEngine, isPrivateMode) {
         val trimmed = inputText.text.trim()
         val currentUrl = activeTab?.url?.trim() ?: ""
-        if (!isEditing || trimmed.isBlank() || trimmed == currentUrl) {
+        if (!isEditing || isPrivateMode || trimmed.isBlank() || trimmed == currentUrl) {
             suggestions = emptyList()
             isLoadingSuggestions = false
             return@LaunchedEffect
@@ -133,7 +133,7 @@ fun AddressBar(
         isLoadingSuggestions = true
         delay(150) // Debounce rapid keystrokes
         val results = try {
-            SearchSuggestionService.getSuggestions(trimmed, searchEngine, maxResults = 8)
+            SearchSuggestionService.getSuggestions(trimmed, searchEngine, maxResults = 8, isPrivateMode = isPrivateMode)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

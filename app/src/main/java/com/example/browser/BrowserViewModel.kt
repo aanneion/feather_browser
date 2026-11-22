@@ -19,6 +19,7 @@ import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
+import com.example.privacy.ProfileProxyManager
 import com.example.privacy.UrlSanitizer
 import com.example.privacy.WebViewProfileManager
 import com.example.weather.WeatherRepository
@@ -41,6 +42,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     // Current Active Profile
     private val _currentProfileId = MutableStateFlow("default_personal")
     val currentProfileId: StateFlow<String> = _currentProfileId.asStateFlow()
+
+    // Session-unlocked profile IDs (for profiles protected with requireDeviceAuth)
+    private val unlockedProfileIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val _pendingUnlockProfile = MutableStateFlow<BrowserProfile?>(null)
+    val pendingUnlockProfile: StateFlow<BrowserProfile?> = _pendingUnlockProfile.asStateFlow()
 
     // Is in Temporary Private / Incognito Mode
     private val _isPrivateMode = MutableStateFlow(false)
@@ -544,6 +550,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         isAdBlockEnabled.value = profile.adBlockEnabled
         blockThirdPartyCookies.value = profile.blockThirdPartyCookies
         enableBackgroundPlay.value = profile.backgroundPlayEnabled
+        ProfileProxyManager.applyProfileProxy(profile.proxyUrl)
     }
 
     private fun updateActiveProfile(transform: (BrowserProfile) -> BrowserProfile) {
@@ -557,7 +564,19 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     /** Clears cookies and site storage for one isolated profile. */
     fun clearProfileData(profileId: String) {
         WebViewProfileManager.clearProfileData(context, profileId)
+        FaviconLoader.clearForProfile(profileId)
         Toast.makeText(context, "Cookies and site data cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    fun rotateProfileFingerprintSeed(profileId: String) {
+        viewModelScope.launch {
+            val freshSeed = repository.generateFingerprintSeed()
+            repository.updateProfileFields(profileId) { it.copy(fingerprintSeed = freshSeed) }
+            if (_currentProfileId.value == profileId) {
+                profileIdentityVersion.value += 1
+            }
+            Toast.makeText(context, "Generated new hardware fingerprint identity", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private var tabsJob: kotlinx.coroutines.Job? = null
@@ -593,6 +612,25 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             dismissSheet()
             return
         }
+        val targetProfile = profiles.value.firstOrNull { it.id == profileId }
+        if (targetProfile?.requireDeviceAuth == true && !unlockedProfileIds.contains(profileId)) {
+            _pendingUnlockProfile.value = targetProfile
+            return
+        }
+        performSwitchProfile(profileId)
+    }
+
+    fun onProfileUnlockResult(profileId: String, authenticated: Boolean) {
+        _pendingUnlockProfile.value = null
+        if (authenticated) {
+            unlockedProfileIds.add(profileId)
+            performSwitchProfile(profileId)
+        } else {
+            Toast.makeText(context, "Authentication required to open locked profile", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun performSwitchProfile(profileId: String) {
         val wasPrivate = _isPrivateMode.value
         _isPrivateMode.value = false
         _currentProfileId.value = profileId
@@ -688,11 +726,25 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun updateProfile(profile: BrowserProfile) {
         viewModelScope.launch {
             val previous = profiles.value.firstOrNull { it.id == profile.id }
-            repository.updateProfile(profile)
+            val ensuredProfile = if (profile.fingerprintSeed == 0L) {
+                profile.copy(fingerprintSeed = repository.generateFingerprintSeed())
+            } else {
+                profile
+            }
+            if (ensuredProfile.requireDeviceAuth) {
+                unlockedProfileIds.add(ensuredProfile.id)
+            }
+            repository.updateProfile(ensuredProfile)
+            if (_currentProfileId.value == ensuredProfile.id) {
+                ProfileProxyManager.applyProfileProxy(ensuredProfile.proxyUrl)
+            }
             val identityChanged = previous != null &&
-                (previous.fingerprintPreset != profile.fingerprintPreset ||
-                    previous.customUserAgent != profile.customUserAgent)
-            if (identityChanged && _currentProfileId.value == profile.id) {
+                (previous.fingerprintPreset != ensuredProfile.fingerprintPreset ||
+                    previous.customUserAgent != ensuredProfile.customUserAgent ||
+                    previous.fingerprintSeed != ensuredProfile.fingerprintSeed ||
+                    previous.webRtcProtectionEnabled != ensuredProfile.webRtcProtectionEnabled ||
+                    previous.proxyUrl != ensuredProfile.proxyUrl)
+            if (identityChanged && _currentProfileId.value == ensuredProfile.id) {
                 profileIdentityVersion.value += 1
             }
         }
@@ -1313,7 +1365,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val tab = _activeTabState.value
         if (tabId.isBlank() || tab == null || tab.url.isBlank() || tab.url == "about:blank") return
 
-        val archiveDir = java.io.File(context.filesDir, "offline_pages").apply { mkdirs() }
+        val profileId = _currentProfileId.value
+        val archiveDir = java.io.File(java.io.File(context.filesDir, "offline_pages"), profileId).apply { mkdirs() }
         val baseTitle = (tab.title.takeIf { it.isNotBlank() && it != "New Tab" }
             ?: UrlUtils.extractDomain(tab.url).ifBlank { "page" })
             .replace(Regex("[^a-zA-Z0-9._-]+"), "_")
@@ -1322,7 +1375,6 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             .ifBlank { "saved_page" }
         val filename = "${baseTitle}_${System.currentTimeMillis() / 1000}.mht"
         val destFile = java.io.File(archiveDir, filename)
-        val profileId = _currentProfileId.value
         val sourceUrl = tab.url
 
         viewModelScope.launch {
@@ -1678,10 +1730,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         _activeSheet.value = ActiveSheet.NONE
     }
 
-    // Clear Data Action
-    fun executeClearData(history: Boolean, cookies: Boolean, cache: Boolean, siteData: Boolean, downloads: Boolean) {
+    // Clear Data Action (defaults to currentProfileOnly = true so other isolated profiles keep their sessions!)
+    fun executeClearData(
+        history: Boolean,
+        cookies: Boolean,
+        cache: Boolean,
+        siteData: Boolean,
+        downloads: Boolean,
+        currentProfileOnly: Boolean = true
+    ) {
+        val activeProfile = _currentProfileId.value
         if (history) {
-            _recentlyClosedTabs.value = emptyList()
+            if (currentProfileOnly) {
+                _recentlyClosedTabs.update { list -> list.filterNot { it.profileId == activeProfile } }
+            } else {
+                _recentlyClosedTabs.value = emptyList()
+            }
         }
         viewModelScope.launch {
             privacyManager.clearBrowsingData(
@@ -1689,9 +1753,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 clearCookies = cookies,
                 clearCache = cache,
                 clearSiteData = siteData,
-                clearDownloads = downloads
+                clearDownloads = downloads,
+                targetProfileId = if (currentProfileOnly) activeProfile else null
             )
-            Toast.makeText(context, "Selected browsing data cleared", Toast.LENGTH_SHORT).show()
+            val scopeLabel = if (currentProfileOnly) "active profile" else "all profiles"
+            Toast.makeText(context, "Cleared selected data for $scopeLabel", Toast.LENGTH_SHORT).show()
             dismissSheet()
         }
     }

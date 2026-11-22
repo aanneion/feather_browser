@@ -91,6 +91,12 @@ private fun removeDocumentStartScripts(webView: WebView) {
     }
 }
 
+private val ephemeralPrivateSeed: Long by lazy {
+    var s = java.security.SecureRandom().nextLong()
+    while (s == 0L) s = java.security.SecureRandom().nextLong()
+    s
+}
+
 private fun installDocumentStartScripts(
     webView: WebView,
     profileId: String,
@@ -100,6 +106,8 @@ private fun installDocumentStartScripts(
     hideCookieBanners: Boolean,
     preset: FingerprintPreset,
     customUserAgent: String?,
+    fingerprintSeed: Long,
+    webRtcProtectionEnabled: Boolean,
     isPrivate: Boolean
 ) {
     val oldHandlers = documentStartHandlers[webView]?.toList().orEmpty()
@@ -124,15 +132,18 @@ private fun installDocumentStartScripts(
     if (hideCookieBanners) {
         scripts += FingerprintScriptGenerator.generateCookieBannerHiderScript() to setOf("*")
     }
-    val shouldInjectFingerprint = !isPrivate &&
+    // Always install per-profile seeded hardware anti-fingerprinting (Canvas, WebGL, AudioContext,
+    // Battery, and WebRTC IP leak guard) so every profile & private session has an isolated hardware hash!
+    val shouldSpoofNavigator = !isPrivate &&
         (preset != FingerprintPreset.DEFAULT || !customUserAgent.isNullOrBlank())
-    if (shouldInjectFingerprint) {
-        scripts += FingerprintScriptGenerator.generateInjectionScript(
-            preset = preset,
-            customUserAgent = customUserAgent,
-            enableCanvasNoise = true
-        ) to setOf("*")
-    }
+    scripts += FingerprintScriptGenerator.generateInjectionScript(
+        preset = preset,
+        customUserAgent = customUserAgent,
+        enableCanvasNoise = true,
+        fingerprintSeed = fingerprintSeed,
+        enableWebRtcProtection = webRtcProtectionEnabled,
+        spoofNavigatorIdentity = shouldSpoofNavigator
+    ) to setOf("*")
     val handlers = mutableListOf<ScriptHandler>()
     try {
         scripts.forEach { (script, origins) ->
@@ -500,6 +511,16 @@ fun WebViewContainer(
     }
     val activePreset = if (isPrivate) FingerprintPreset.DEFAULT else profilePreset
     val effectiveCustomUserAgent = if (isPrivate) "" else currentProfile?.customUserAgent
+    val effectiveFingerprintSeed = if (isPrivate) {
+        ephemeralPrivateSeed
+    } else {
+        (currentProfile?.fingerprintSeed?.takeIf { it != 0L }) ?: (effectiveProfileId.hashCode().toLong() or 0x100000001L)
+    }
+    val effectiveWebRtcProtection = if (isPrivate) {
+        true
+    } else {
+        currentProfile?.webRtcProtectionEnabled ?: true
+    }
 
     val activeSearchEngine = viewModel.searchEngine.collectAsState().value
     val currentHttpsMode by rememberUpdatedState(httpsMode)
@@ -514,6 +535,8 @@ fun WebViewContainer(
     val currentHideCookieBanners by rememberUpdatedState(hideCookieBanners)
     val currentPresetState by rememberUpdatedState(activePreset)
     val currentCustomUserAgentState by rememberUpdatedState(effectiveCustomUserAgent)
+    val currentFingerprintSeed by rememberUpdatedState(effectiveFingerprintSeed)
+    val currentWebRtcProtection by rememberUpdatedState(effectiveWebRtcProtection)
 
     var renderCrashCount by remember(tabId) { mutableStateOf(0) }
 
@@ -526,8 +549,10 @@ fun WebViewContainer(
             }
             when (action) {
                 is WebViewAction.LoadUrl -> {
-                    val safeOfflinePrefix = "file://${context.filesDir.absolutePath}/offline_pages/"
-                    webView.settings.allowFileAccess = action.url.startsWith(safeOfflinePrefix)
+                    val safeOfflineRoot = "file://${context.filesDir.absolutePath}/offline_pages/"
+                    val safeProfileOffline = "${safeOfflineRoot}${effectiveProfileId}/"
+                    webView.settings.allowFileAccess = action.url.startsWith(safeProfileOffline) ||
+                        (action.url.startsWith(safeOfflineRoot) && !action.url.removePrefix(safeOfflineRoot).contains('/'))
                     val headers = if (currentSendPrivacySignals &&
                         (action.url.startsWith("http://", ignoreCase = true) ||
                             action.url.startsWith("https://", ignoreCase = true))
@@ -717,6 +742,8 @@ fun WebViewContainer(
         hideCookieBanners,
         activePreset,
         effectiveCustomUserAgent,
+        effectiveFingerprintSeed,
+        effectiveWebRtcProtection,
         isPrivate
     ) {
         val webView = webViewRef ?: return@LaunchedEffect
@@ -730,6 +757,8 @@ fun WebViewContainer(
                 hideCookieBanners = hideCookieBanners,
                 preset = activePreset,
                 customUserAgent = effectiveCustomUserAgent,
+                fingerprintSeed = effectiveFingerprintSeed,
+                webRtcProtectionEnabled = effectiveWebRtcProtection,
                 isPrivate = isPrivate
             )
         }
@@ -750,16 +779,19 @@ fun WebViewContainer(
             if (isAdBlockEnabled && YouTubeAdBlocker.isYouTube(currentUrl)) {
                 webView.evaluateJavascript(YouTubeAdBlocker.getYouTubeAdBlockScript(), null)
             }
-            if (!isPrivate && (activePreset != FingerprintPreset.DEFAULT || !effectiveCustomUserAgent.isNullOrBlank())) {
-                webView.evaluateJavascript(
-                    FingerprintScriptGenerator.generateInjectionScript(
-                        activePreset,
-                        effectiveCustomUserAgent,
-                        enableCanvasNoise = true
-                    ),
-                    null
-                )
-            }
+            val shouldSpoofNavigator = !isPrivate &&
+                (activePreset != FingerprintPreset.DEFAULT || !effectiveCustomUserAgent.isNullOrBlank())
+            webView.evaluateJavascript(
+                FingerprintScriptGenerator.generateInjectionScript(
+                    preset = activePreset,
+                    customUserAgent = effectiveCustomUserAgent,
+                    enableCanvasNoise = true,
+                    fingerprintSeed = effectiveFingerprintSeed,
+                    enableWebRtcProtection = effectiveWebRtcProtection,
+                    spoofNavigatorIdentity = shouldSpoofNavigator
+                ),
+                null
+            )
         } catch (t: Throwable) { }
     }
 
@@ -917,7 +949,10 @@ fun WebViewContainer(
                             builtInZoomControls = true
                             displayZoomControls = false
                             textZoom = pageTextZoom.coerceIn(50, 200)
-                            allowFileAccess = initialUrl.startsWith("file://${context.filesDir.absolutePath}/offline_pages/")
+                            val safeOfflineRoot = "file://${context.filesDir.absolutePath}/offline_pages/"
+                            val safeProfileOffline = "${safeOfflineRoot}${effectiveProfileId}/"
+                            allowFileAccess = initialUrl.startsWith(safeProfileOffline) ||
+                                (initialUrl.startsWith(safeOfflineRoot) && !initialUrl.removePrefix(safeOfflineRoot).contains('/'))
                             allowContentAccess = false
                             setSupportMultipleWindows(true)
                             mediaPlaybackRequiresUserGesture = false
@@ -1043,6 +1078,20 @@ fun WebViewContainer(
                                                 null
                                             )
                                         }
+                                        val shouldSpoofNavigator = !isPrivate &&
+                                            (currentPresetState != FingerprintPreset.DEFAULT ||
+                                                !currentCustomUserAgentState.isNullOrBlank())
+                                        view?.evaluateJavascript(
+                                            FingerprintScriptGenerator.generateInjectionScript(
+                                                preset = currentPresetState,
+                                                customUserAgent = currentCustomUserAgentState,
+                                                enableCanvasNoise = true,
+                                                fingerprintSeed = currentFingerprintSeed,
+                                                enableWebRtcProtection = currentWebRtcProtection,
+                                                spoofNavigatorIdentity = shouldSpoofNavigator
+                                            ),
+                                            null
+                                        )
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -1103,19 +1152,20 @@ fun WebViewContainer(
                                                 null
                                             )
                                         }
-                                        if (!isPrivate &&
+                                        val shouldSpoofNavigator = !isPrivate &&
                                             (currentPresetState != FingerprintPreset.DEFAULT ||
                                                 !currentCustomUserAgentState.isNullOrBlank())
-                                        ) {
-                                            view?.evaluateJavascript(
-                                                FingerprintScriptGenerator.generateInjectionScript(
-                                                    currentPresetState,
-                                                    currentCustomUserAgentState,
-                                                    enableCanvasNoise = true
-                                                ),
-                                                null
-                                            )
-                                        }
+                                        view?.evaluateJavascript(
+                                            FingerprintScriptGenerator.generateInjectionScript(
+                                                preset = currentPresetState,
+                                                customUserAgent = currentCustomUserAgentState,
+                                                enableCanvasNoise = true,
+                                                fingerprintSeed = currentFingerprintSeed,
+                                                enableWebRtcProtection = currentWebRtcProtection,
+                                                spoofNavigatorIdentity = shouldSpoofNavigator
+                                            ),
+                                            null
+                                        )
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -1259,8 +1309,11 @@ fun WebViewContainer(
                                     return true
                                 }
                                 if (sanitizedUrl.startsWith("file://", ignoreCase = true)) {
-                                    val safeOfflinePrefix = "file://${context.filesDir.absolutePath}/offline_pages/"
-                                    return !sanitizedUrl.startsWith(safeOfflinePrefix)
+                                    val safeOfflineRoot = "file://${context.filesDir.absolutePath}/offline_pages/"
+                                    val safeProfileOffline = "${safeOfflineRoot}${effectiveProfileId}/"
+                                    val allowed = sanitizedUrl.startsWith(safeProfileOffline) ||
+                                        (sanitizedUrl.startsWith(safeOfflineRoot) && !sanitizedUrl.removePrefix(safeOfflineRoot).contains('/'))
+                                    return !allowed
                                 }
                                 if (sanitizedUrl.startsWith("http://", ignoreCase = true) || 
                                     sanitizedUrl.startsWith("https://", ignoreCase = true) ||
@@ -1319,8 +1372,15 @@ fun WebViewContainer(
                                 if (!isUserGesture || resultMsg == null) return false
                                 val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
                                 val popup = WebView(ctx)
-                                popup.settings.javaScriptEnabled = true
-                                popup.settings.domStorageEnabled = true
+                                // CRITICAL ISOLATION FIX: Bind temporary popup WebView to the active
+                                // profile BEFORE Chromium touches any cookies/storage during target=_blank
+                                // redirects, and disable third-party cookies on it.
+                                WebViewProfileManager.applyToWebView(popup, effectiveProfileId)
+                                WebViewProfileManager.configureCookies(popup, effectiveProfileId, currentBlockThirdPartyCookies)
+                                popup.settings.javaScriptEnabled = false
+                                popup.settings.domStorageEnabled = false
+                                popup.settings.allowFileAccess = false
+                                popup.settings.allowContentAccess = false
                                 view?.settings?.userAgentString?.let { popup.settings.userAgentString = it }
                                 var opened = false
 
@@ -1330,7 +1390,7 @@ fun WebViewContainer(
                                         !url.startsWith("https://", ignoreCase = true)
                                     ) return
                                     opened = true
-                                    viewModel.openLinkInNewTab(url, openInBackground = false)
+                                    viewModel.openLinkInNewTab(url, openInBackground = false, isPrivate = isPrivate)
                                     try {
                                         popup.stopLoading()
                                         popup.destroy()
@@ -1347,10 +1407,104 @@ fun WebViewContainer(
                                         url?.let(::routePopupUrl)
                                         return true
                                     }
+
+                                    override fun shouldOverrideUrlLoading(v: WebView?, request: WebResourceRequest?): Boolean {
+                                        request?.url?.toString()?.let(::routePopupUrl)
+                                        return true
+                                    }
                                 }
                                 transport.webView = popup
                                 resultMsg.sendToTarget()
                                 return true
+                            }
+
+                            override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
+                                super.onReceivedIcon(view, icon)
+                                com.example.browser.FaviconLoader.cacheFromWebViewIcon(
+                                    profileId = effectiveProfileId,
+                                    url = view?.url,
+                                    icon = icon,
+                                    isPrivate = isPrivate
+                                )
+                            }
+
+                            override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                                if (request == null) return
+                                // Deny hardware Camera/Mic/MIDI permissions by default in Private Mode
+                                // and prompt explicitly per-origin in normal profiles so permissions
+                                // never silently carry across profiles.
+                                if (isPrivate) {
+                                    request.deny()
+                                    return
+                                }
+                                val activity = ctx.findActivity()
+                                if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                                    request.deny()
+                                    return
+                                }
+                                val originLabel = request.origin?.host ?: request.origin?.toString() ?: "This site"
+                                val resources = request.resources ?: emptyArray()
+                                val readable = resources.mapNotNull { res ->
+                                    when (res) {
+                                        android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE -> "Camera"
+                                        android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE -> "Microphone"
+                                        android.webkit.PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID -> "Protected Media (DRM)"
+                                        else -> null
+                                    }
+                                }
+                                if (readable.isEmpty()) {
+                                    request.deny()
+                                    return
+                                }
+                                val profileLabel = currentProfile?.displayName ?: "Current Profile"
+                                try {
+                                    android.app.AlertDialog.Builder(activity)
+                                        .setTitle("Site Permission ($profileLabel)")
+                                        .setMessage("$originLabel wants to access: ${readable.joinToString(", ")}")
+                                        .setPositiveButton("Allow") { _, _ ->
+                                            try { request.grant(resources) } catch (_: Throwable) { request.deny() }
+                                        }
+                                        .setNegativeButton("Block") { _, _ -> request.deny() }
+                                        .setOnCancelListener { request.deny() }
+                                        .show()
+                                } catch (_: Throwable) {
+                                    request.deny()
+                                }
+                            }
+
+                            override fun onGeolocationPermissionsShowPrompt(
+                                origin: String?,
+                                callback: android.webkit.GeolocationPermissions.Callback?
+                            ) {
+                                if (callback == null) return
+                                // Never retain geolocation across sessions (`retain = false`) and block in Private Mode
+                                if (isPrivate) {
+                                    callback.invoke(origin, false, false)
+                                    return
+                                }
+                                val activity = ctx.findActivity()
+                                if (activity == null || activity.isFinishing || activity.isDestroyed) {
+                                    callback.invoke(origin, false, false)
+                                    return
+                                }
+                                val profileLabel = currentProfile?.displayName ?: "Current Profile"
+                                try {
+                                    android.app.AlertDialog.Builder(activity)
+                                        .setTitle("Location Access ($profileLabel)")
+                                        .setMessage("${origin ?: "This website"} wants to know your device location for this session.")
+                                        .setPositiveButton("Allow Once") { _, _ ->
+                                            callback.invoke(origin, true, false)
+                                        }
+                                        .setNegativeButton("Block") { _, _ ->
+                                            callback.invoke(origin, false, false)
+                                        }
+                                        .setOnCancelListener {
+                                            callback.invoke(origin, false, false)
+                                        }
+                                        .show()
+                                } catch (_: Throwable) {
+                                    callback.invoke(origin, false, false)
+                                }
                             }
 
                             override fun onJsBeforeUnload(
@@ -1479,6 +1633,8 @@ fun WebViewContainer(
                             hideCookieBanners = hideCookieBanners,
                             preset = activePreset,
                             customUserAgent = effectiveCustomUserAgent,
+                            fingerprintSeed = effectiveFingerprintSeed,
+                            webRtcProtectionEnabled = effectiveWebRtcProtection,
                             isPrivate = isPrivate
                         )
 

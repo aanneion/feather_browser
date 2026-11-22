@@ -7,14 +7,23 @@ import android.net.Uri
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.example.browser.FaviconLoader
 import com.example.data.AppDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class PrivacyManager(private val context: Context, private val database: AppDatabase) {
 
     private fun removeDownloadFile(fileUri: String?) {
         val uri = fileUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return
+        if (uri.scheme == "file") {
+            val path = uri.path
+            if (!path.isNullOrBlank()) {
+                runCatching { File(path).delete() }
+            }
+            return
+        }
         if (uri.scheme != "content") return
         val downloadId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
@@ -23,40 +32,75 @@ class PrivacyManager(private val context: Context, private val database: AppData
 
     /**
      * Clears specified browsing data.
+     *
+     * When [targetProfileId] is non-null (default for isolated profiles), ONLY that profile's
+     * history, downloads, offline archives, favicons, cookies, site storage, and HTTP cache
+     * are wiped — leaving all other profiles completely untouched!
+     * Pass `targetProfileId = null` to wipe across ALL profiles.
      */
     suspend fun clearBrowsingData(
         clearHistory: Boolean = true,
         clearCookies: Boolean = true,
         clearCache: Boolean = true,
         clearSiteData: Boolean = true,
-        clearDownloads: Boolean = false
+        clearDownloads: Boolean = false,
+        targetProfileId: String? = null
     ) = withContext(Dispatchers.IO) {
         if (clearHistory) {
-            database.historyDao().deleteAllHistory()
+            if (targetProfileId != null) {
+                database.historyDao().deleteHistoryForProfile(targetProfileId)
+                FaviconLoader.clearForProfile(targetProfileId)
+            } else {
+                database.historyDao().deleteAllHistory()
+                FaviconLoader.clearAll()
+            }
         }
         if (clearDownloads) {
-            // Remove both the history rows and files owned by Android's
-            // DownloadManager; clearing only Room leaves private files behind.
-            database.downloadDao().getAllDownloads().forEach { item ->
-                removeDownloadFile(item.fileUri)
+            if (targetProfileId != null) {
+                database.downloadDao().getDownloadsForProfileOnce(targetProfileId).forEach { item ->
+                    removeDownloadFile(item.fileUri)
+                }
+                database.downloadDao().deleteDownloadsForProfile(targetProfileId)
+                runCatching {
+                    File(File(context.filesDir, "offline_pages"), targetProfileId).deleteRecursively()
+                }
+            } else {
+                database.downloadDao().getAllDownloads().forEach { item ->
+                    removeDownloadFile(item.fileUri)
+                }
+                database.downloadDao().deleteAllDownloads()
+                runCatching {
+                    File(context.filesDir, "offline_pages").deleteRecursively()
+                }
             }
-            database.downloadDao().deleteAllDownloads()
         }
         if (clearCookies) {
             withContext(Dispatchers.Main) {
-                WebViewProfileManager.clearAllCookies()
+                if (targetProfileId != null) {
+                    WebViewProfileManager.clearProfileCookies(targetProfileId)
+                } else {
+                    WebViewProfileManager.clearAllCookies()
+                }
             }
         }
         if (clearSiteData) {
             withContext(Dispatchers.Main) {
-                WebViewProfileManager.clearAllSiteData()
+                if (targetProfileId != null) {
+                    WebViewProfileManager.clearProfileSiteData(targetProfileId)
+                } else {
+                    WebViewProfileManager.clearAllSiteData()
+                }
             }
         }
         if (clearCache) {
             withContext(Dispatchers.Main) {
                 try {
-                    // Clear WebView cache on main thread safely
+                    // Bind the temporary WebView to targetProfileId BEFORE calling clearCache(true)
+                    // so we clear that profile's Chromium disk cache without touching other profiles!
                     val dummyWebView = WebView(context).apply {
+                        if (targetProfileId != null) {
+                            WebViewProfileManager.applyToWebView(this, targetProfileId)
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun onRenderProcessGone(v: WebView?, detail: RenderProcessGoneDetail?): Boolean = true
                         }
@@ -64,8 +108,8 @@ class PrivacyManager(private val context: Context, private val database: AppData
                     dummyWebView.clearCache(true)
                     try {
                         dummyWebView.destroy()
-                    } catch (e: Throwable) { }
-                } catch (e: Throwable) {
+                    } catch (_: Throwable) { }
+                } catch (_: Throwable) {
                     // Guard against headless/virtualized graphic compositor failures
                 }
             }
@@ -78,6 +122,7 @@ class PrivacyManager(private val context: Context, private val database: AppData
      */
     suspend fun cleanPrivateSessionData() = withContext(Dispatchers.IO) {
         database.tabDao().deleteAllPrivateTabs()
+        FaviconLoader.clearForProfile(WebViewProfileManager.PRIVATE_PROFILE_ID)
         withContext(Dispatchers.Main) {
             WebViewProfileManager.clearProfileData(
                 context,

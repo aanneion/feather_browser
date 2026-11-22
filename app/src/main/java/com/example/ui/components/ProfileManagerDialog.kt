@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.FingerprintPreset
 import com.example.data.model.BrowserProfile
+import com.example.privacy.ProfileProxyManager
 import com.example.privacy.WebViewProfileManager
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -40,6 +41,7 @@ fun ProfileManagerDialog(
     onUpdateProfile: (BrowserProfile) -> Unit,
     onDeleteProfile: (String) -> Unit,
     onClearProfileData: (String) -> Unit = {},
+    onRotateFingerprintSeed: ((String) -> Unit)? = null,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -185,6 +187,15 @@ fun ProfileManagerDialog(
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false)
                                         )
+                                        if (profile.requireDeviceAuth) {
+                                            Spacer(modifier = Modifier.width(5.dp))
+                                            Icon(
+                                                imageVector = Icons.Default.Lock,
+                                                contentDescription = "Protected by Device Lock",
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                        }
                                         if (isCurrent) {
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Surface(
@@ -204,8 +215,9 @@ fun ProfileManagerDialog(
                                     Text(
                                         text = buildString {
                                             append(preset.displayName)
+                                            if (profile.proxyUrl.isNotBlank()) append(" · Proxy")
+                                            if (profile.webRtcProtectionEnabled) append(" · WebRTC Shield")
                                             if (!profile.adBlockEnabled) append(" · Ad block off")
-                                            if (!profile.backgroundPlayEnabled) append(" · BG off")
                                         },
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Medium,
@@ -280,6 +292,9 @@ fun ProfileManagerDialog(
             onClearData = {
                 onClearProfileData(profile.id)
             },
+            onRotateFingerprintSeed = onRotateFingerprintSeed?.let { rotate ->
+                { rotate(profile.id) }
+            },
             onDismiss = { profileToEditFingerprint = null }
         )
     }
@@ -323,8 +338,10 @@ fun EditProfileFingerprintDialog(
     profile: BrowserProfile,
     onConfirm: (BrowserProfile) -> Unit,
     onClearData: (() -> Unit)? = null,
+    onRotateFingerprintSeed: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     var displayName by remember { mutableStateOf(profile.displayName) }
     var customUserAgent by remember { mutableStateOf(profile.customUserAgent) }
     var selectedPreset by remember {
@@ -339,8 +356,22 @@ fun EditProfileFingerprintDialog(
     var adBlockEnabled by remember { mutableStateOf(profile.adBlockEnabled) }
     var blockThirdPartyCookies by remember { mutableStateOf(profile.blockThirdPartyCookies) }
     var backgroundPlayEnabled by remember { mutableStateOf(profile.backgroundPlayEnabled) }
+    var webRtcProtectionEnabled by remember { mutableStateOf(profile.webRtcProtectionEnabled) }
+    var proxyUrl by remember { mutableStateOf(profile.proxyUrl) }
+    var requireDeviceAuth by remember { mutableStateOf(profile.requireDeviceAuth) }
+    var currentSeed by remember(profile.fingerprintSeed) { mutableStateOf(profile.fingerprintSeed) }
     var showClearConfirm by remember { mutableStateOf(false) }
     val isolationSupported = remember { WebViewProfileManager.isSupported() }
+    val proxySupported = remember { ProfileProxyManager.isWebViewProxySupported() }
+    val isDeviceSecure = remember {
+        try {
+            val km = context.getSystemService(android.content.Context.KEYGUARD_SERVICE) as? android.app.KeyguardManager
+            km?.isDeviceSecure == true
+        } catch (_: Throwable) {
+            false
+        }
+    }
+    val isProxyValid = remember(proxyUrl) { ProfileProxyManager.isValidOrBlank(proxyUrl) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -459,6 +490,137 @@ fun EditProfileFingerprintDialog(
                     )
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("WebRTC IP leak shield", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text(
+                            "Block STUN local/public IP discovery across WebRTC peer connections",
+                            fontSize = 10.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = webRtcProtectionEnabled,
+                        onCheckedChange = { webRtcProtectionEnabled = it }
+                    )
+                }
+
+                if (profile.id != "default_personal") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Lock profile with Device PIN / Biometric", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                if (isDeviceSecure) {
+                                    "Require Android screen lock credential before opening this profile"
+                                } else {
+                                    "Set a screen lock PIN/fingerprint in Android Settings to enable"
+                                },
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = requireDeviceAuth,
+                            enabled = isDeviceSecure || requireDeviceAuth,
+                            onCheckedChange = { requireDeviceAuth = it }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = proxyUrl,
+                    onValueChange = { if (it.length <= 256) proxyUrl = it },
+                    label = { Text("Per-Profile Proxy (optional)") },
+                    placeholder = { Text("socks5://127.0.0.1:9050 or http://host:8080") },
+                    singleLine = true,
+                    isError = !isProxyValid,
+                    shape = RoundedCornerShape(12.dp),
+                    supportingText = {
+                        Text(
+                            text = when {
+                                !isProxyValid -> "Enter a valid proxy (e.g. socks5://127.0.0.1:9050 or http://10.0.0.2:8080)"
+                                !proxySupported -> "Note: WebView proxy override is not supported by this system WebView version"
+                                else -> "Routes this profile's traffic & DNS through SOCKS5 (e.g. Orbot/Tor) or HTTP proxy. Leave empty for direct connection."
+                            },
+                            fontSize = 10.5.sp
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Quick Tor/Orbot preset chip + Rotate Hardware Seed button
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AssistChip(
+                        onClick = { proxyUrl = "socks5://127.0.0.1:9050" },
+                        label = { Text("Orbot / Tor (9050)", fontSize = 11.sp) }
+                    )
+                    if (proxyUrl.isNotBlank()) {
+                        AssistChip(
+                            onClick = { proxyUrl = "" },
+                            label = { Text("Direct", fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Isolated Hardware Seed",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Canvas/WebGL/Audio ID: #${java.lang.Long.toUnsignedString(currentSeed, 16).takeLast(8).uppercase()}",
+                                fontSize = 10.5.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = {
+                                var next = java.security.SecureRandom().nextLong()
+                                while (next == 0L) next = java.security.SecureRandom().nextLong()
+                                currentSeed = next
+                                onRotateFingerprintSeed?.invoke()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Rotate", fontSize = 11.5.sp)
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text("Browser fingerprint & identity", fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
@@ -552,11 +714,15 @@ fun EditProfileFingerprintDialog(
                             fingerprintPreset = selectedPreset.name,
                             adBlockEnabled = adBlockEnabled,
                             blockThirdPartyCookies = blockThirdPartyCookies,
-                            backgroundPlayEnabled = backgroundPlayEnabled
+                            backgroundPlayEnabled = backgroundPlayEnabled,
+                            fingerprintSeed = currentSeed,
+                            webRtcProtectionEnabled = webRtcProtectionEnabled,
+                            proxyUrl = proxyUrl.trim(),
+                            requireDeviceAuth = requireDeviceAuth
                         )
                     )
                 },
-                enabled = displayName.isNotBlank()
+                enabled = displayName.isNotBlank() && isProxyValid
             ) {
                 Text("Save Profile")
             }

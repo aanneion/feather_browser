@@ -1,5 +1,6 @@
 package com.example.weather
 
+import com.example.privacy.ProfileProxyManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -10,8 +11,15 @@ import kotlin.coroutines.cancellation.CancellationException
 
 class DefaultIpLocationProvider : IpLocationProvider {
 
+    private fun openProxiedConnection(url: URL): HttpURLConnection? {
+        val proxy = ProfileProxyManager.getActiveJavaNetProxy() ?: return null
+        return url.openConnection(proxy) as HttpURLConnection
+    }
+
     override suspend fun getLocation(): IpLocation? {
         return withContext(Dispatchers.IO) {
+            if (ProfileProxyManager.getActiveJavaNetProxy() == null) return@withContext null
+
             // First attempt: ip-api.com (most granular ISP/campus city database, accurately identifies Mymensingh for BAU)
             val ipApiResult = fetchFromIpApiCom()
             if (ipApiResult != null) return@withContext ipApiResult
@@ -29,7 +37,7 @@ class DefaultIpLocationProvider : IpLocationProvider {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL("http://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,district,zip,lat,lon,timezone,isp,org,as,query")
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (openProxiedConnection(url) ?: return null).apply {
                 requestMethod = "GET"
                 connectTimeout = 3500
                 readTimeout = 3500
@@ -74,7 +82,7 @@ class DefaultIpLocationProvider : IpLocationProvider {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL("https://ipwho.is/")
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (openProxiedConnection(url) ?: return null).apply {
                 requestMethod = "GET"
                 connectTimeout = 3500
                 readTimeout = 3500
@@ -119,7 +127,7 @@ class DefaultIpLocationProvider : IpLocationProvider {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL("https://get.geojs.io/v1/ip/geo.json")
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (openProxiedConnection(url) ?: return null).apply {
                 requestMethod = "GET"
                 connectTimeout = 3500
                 readTimeout = 3500
@@ -165,7 +173,7 @@ class DefaultIpLocationProvider : IpLocationProvider {
         var connection: HttpURLConnection? = null
         return try {
             val url = URL(String.format(Locale.US, "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=%.4f&longitude=%.4f&localityLanguage=en", lat, lon))
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (openProxiedConnection(url) ?: return fallbackCity).apply {
                 connectTimeout = 2500
                 readTimeout = 2500
                 setRequestProperty("User-Agent", "FeatherBrowser/1.0 (Android; Mobile)")

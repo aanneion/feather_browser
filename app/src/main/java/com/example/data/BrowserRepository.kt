@@ -5,6 +5,7 @@ import android.content.ContentUris
 import android.content.Context
 import android.net.Uri
 import com.example.data.model.*
+import java.security.SecureRandom
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -15,9 +16,25 @@ class BrowserRepository(
     private val context: Context? = null
 ) {
     private val preferences = context?.let(::BrowserPreferences)
+    private val secureRandom = SecureRandom()
+
+    fun generateFingerprintSeed(): Long {
+        var seed = secureRandom.nextLong()
+        while (seed == 0L) {
+            seed = secureRandom.nextLong()
+        }
+        return seed
+    }
 
     private fun removeOwnedDownloadFile(item: DownloadItem) {
         val uri = item.fileUri?.let { runCatching { Uri.parse(it) }.getOrNull() } ?: return
+        if (uri.scheme == "file") {
+            val path = uri.path
+            if (!path.isNullOrBlank()) {
+                runCatching { java.io.File(path).delete() }
+            }
+            return
+        }
         if (uri.scheme != "content") return
         val downloadId = runCatching { ContentUris.parseId(uri) }.getOrNull() ?: return
         val manager = context?.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager ?: return
@@ -114,9 +131,18 @@ class BrowserRepository(
                     displayName = "Personal",
                     iconName = "person",
                     colorHex = "#3B82F6",
-                    fingerprintPreset = "DEFAULT"
+                    fingerprintPreset = "DEFAULT",
+                    fingerprintSeed = generateFingerprintSeed()
                 )
             )
+        } else if (existing.fingerprintSeed == 0L) {
+            database.profileDao().updateProfile(existing.copy(fingerprintSeed = generateFingerprintSeed()))
+        }
+        // Ensure every surviving profile has a non-zero cryptographic fingerprint seed
+        database.profileDao().getAllProfiles().first().forEach { prof ->
+            if (prof.fingerprintSeed == 0L) {
+                database.profileDao().updateProfile(prof.copy(fingerprintSeed = generateFingerprintSeed()))
+            }
         }
         // Remove legacy pre-seeded default profiles so the browser ships with the default "personal" profile only
         val legacyDefaultProfileIds = listOf("work", "university", "testing")
@@ -139,7 +165,10 @@ class BrowserRepository(
         customUserAgent: String = "",
         adBlockEnabled: Boolean = true,
         blockThirdPartyCookies: Boolean = true,
-        backgroundPlayEnabled: Boolean = true
+        backgroundPlayEnabled: Boolean = true,
+        webRtcProtectionEnabled: Boolean = true,
+        proxyUrl: String = "",
+        requireDeviceAuth: Boolean = false
     ): BrowserProfile = withContext(Dispatchers.IO) {
         val id = "profile_" + System.currentTimeMillis()
         val profile = BrowserProfile(
@@ -151,7 +180,11 @@ class BrowserRepository(
             customUserAgent = customUserAgent,
             adBlockEnabled = adBlockEnabled,
             blockThirdPartyCookies = blockThirdPartyCookies,
-            backgroundPlayEnabled = backgroundPlayEnabled
+            backgroundPlayEnabled = backgroundPlayEnabled,
+            fingerprintSeed = generateFingerprintSeed(),
+            webRtcProtectionEnabled = webRtcProtectionEnabled,
+            proxyUrl = proxyUrl.trim(),
+            requireDeviceAuth = requireDeviceAuth
         )
         database.profileDao().insertProfile(profile)
         profile
@@ -188,6 +221,11 @@ class BrowserRepository(
         database.bookmarkDao().deleteBookmarksForProfile(profileId)
         database.historyDao().deleteHistoryForProfile(profileId)
         deleteDownloadsForProfileInternal(profileId)
+        context?.let { ctx ->
+            runCatching {
+                java.io.File(java.io.File(ctx.filesDir, "offline_pages"), profileId).deleteRecursively()
+            }
+        }
         database.shortcutDao().deleteShortcutsForProfile(profileId)
         database.dismissedShortcutDao().clearDismissedShortcutsForProfile(profileId)
         database.profileDao().deleteProfileById(profileId)

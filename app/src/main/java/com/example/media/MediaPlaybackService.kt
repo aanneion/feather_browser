@@ -745,8 +745,9 @@ class MediaPlaybackService : Service() {
     private fun downloadBitmap(urlString: String): Bitmap? {
         var connection: HttpURLConnection? = null
         return try {
+            val proxy = com.example.privacy.ProfileProxyManager.getActiveJavaNetProxy() ?: return null
             val url = URL(urlString)
-            connection = (url.openConnection() as HttpURLConnection).apply {
+            connection = (url.openConnection(proxy) as HttpURLConnection).apply {
                 doInput = true
                 instanceFollowRedirects = true
                 connectTimeout = 4000

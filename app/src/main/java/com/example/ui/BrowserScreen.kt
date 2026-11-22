@@ -1,7 +1,12 @@
 package com.example.ui
 
+import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -72,11 +77,45 @@ fun BrowserScreen(
     val hideCookieBanners by viewModel.hideCookieBanners.collectAsStateWithLifecycle()
     val pageTextZoom by viewModel.pageTextZoom.collectAsStateWithLifecycle()
     val canReopenClosedTab by viewModel.canReopenClosedTab.collectAsStateWithLifecycle()
+    val pendingUnlockProfile by viewModel.pendingUnlockProfile.collectAsStateWithLifecycle()
     val activeMediaTabId by MediaSessionManager.activeMediaTabId.collectAsStateWithLifecycle()
 
     var showMenuSheet by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
     var qrCodePayload by remember { mutableStateOf<Pair<String, String>?>(null) }
+
+    val authContext = LocalContext.current
+    val pendingProfileRef by rememberUpdatedState(pendingUnlockProfile)
+    val deviceAuthLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val target = pendingProfileRef ?: return@rememberLauncherForActivityResult
+        viewModel.onProfileUnlockResult(target.id, result.resultCode == Activity.RESULT_OK)
+    }
+
+    LaunchedEffect(pendingUnlockProfile?.id) {
+        val target = pendingUnlockProfile ?: return@LaunchedEffect
+        val keyguard = authContext.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        if (keyguard == null || !keyguard.isDeviceSecure) {
+            // If user removed their Android screen lock after locking a profile, unlock gracefully
+            viewModel.onProfileUnlockResult(target.id, true)
+            return@LaunchedEffect
+        }
+        @Suppress("DEPRECATION")
+        val confirmIntent = keyguard.createConfirmDeviceCredentialIntent(
+            "Unlock ${target.displayName}",
+            "Authenticate with your device PIN, pattern, or biometric to open this isolated profile."
+        )
+        if (confirmIntent != null) {
+            try {
+                deviceAuthLauncher.launch(confirmIntent)
+            } catch (_: Exception) {
+                viewModel.onProfileUnlockResult(target.id, false)
+            }
+        } else {
+            viewModel.onProfileUnlockResult(target.id, true)
+        }
+    }
 
     LaunchedEffect(activeSheet == ActiveSheet.DOWNLOADS) {
         if (activeSheet == ActiveSheet.DOWNLOADS) {
@@ -630,6 +669,7 @@ fun BrowserScreen(
                 onUpdateProfile = { viewModel.updateProfile(it) },
                 onDeleteProfile = { viewModel.deleteProfile(it) },
                 onClearProfileData = { viewModel.clearProfileData(it) },
+                onRotateFingerprintSeed = { viewModel.rotateProfileFingerprintSeed(it) },
                 onDismiss = { viewModel.dismissSheet() }
             )
         } else if (activeSheet == ActiveSheet.PRIVACY_SHIELD) {
@@ -766,8 +806,9 @@ fun BrowserScreen(
 
     if (showClearDataDialog) {
         ClearBrowsingDataDialog(
-            onConfirm = { history, cookies, cache, siteData, downloads ->
-                viewModel.executeClearData(history, cookies, cache, siteData, downloads)
+            activeProfileName = currentProfile?.displayName ?: "Active Profile",
+            onConfirm = { history, cookies, cache, siteData, downloads, currentProfileOnly ->
+                viewModel.executeClearData(history, cookies, cache, siteData, downloads, currentProfileOnly)
                 showClearDataDialog = false
             },
             onDismiss = { showClearDataDialog = false }
