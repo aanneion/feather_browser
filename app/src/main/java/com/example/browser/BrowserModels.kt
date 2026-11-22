@@ -89,6 +89,102 @@ data class ContextMenuData(
     val type: ContextMenuType = ContextMenuType.LINK
 )
 
+enum class OmniboxMatchKind {
+    BOOKMARK,
+    HISTORY
+}
+
+data class OmniboxLocalSuggestion(
+    val title: String,
+    val url: String,
+    val kind: OmniboxMatchKind
+)
+
+object OmniboxMatcher {
+    /**
+     * Ranks local bookmarks and browsing history against [query].
+     * Never returns results when [isPrivateMode] is active or [query] is blank.
+     */
+    fun matchLocalSuggestions(
+        query: String,
+        bookmarks: List<com.example.data.model.Bookmark>,
+        history: List<com.example.data.model.HistoryItem>,
+        isPrivateMode: Boolean = false,
+        maxResults: Int = 4
+    ): List<OmniboxLocalSuggestion> {
+        if (isPrivateMode || maxResults <= 0) return emptyList()
+        val needle = query.trim().lowercase()
+        if (needle.isBlank()) return emptyList()
+
+        data class ScoredCandidate(
+            val suggestion: OmniboxLocalSuggestion,
+            val score: Int
+        )
+
+        val seenUrls = HashSet<String>()
+        val candidates = ArrayList<ScoredCandidate>()
+
+        fun scoreEntry(title: String, url: String, isBookmark: Boolean): Int {
+            val lowerTitle = title.lowercase()
+            val lowerUrl = url.lowercase()
+            val cleanHostPath = lowerUrl
+                .removePrefix("https://")
+                .removePrefix("http://")
+                .removePrefix("www.")
+
+            val baseScore = when {
+                cleanHostPath.startsWith(needle) -> 100
+                lowerTitle.startsWith(needle) -> 90
+                cleanHostPath.contains("/$needle") || cleanHostPath.contains(".$needle") -> 75
+                lowerTitle.contains(" $needle") -> 70
+                cleanHostPath.contains(needle) -> 55
+                lowerTitle.contains(needle) -> 45
+                else -> return -1
+            }
+            return baseScore + if (isBookmark) 12 else 0
+        }
+
+        for (bm in bookmarks) {
+            if (bm.url.isBlank()) continue
+            val score = scoreEntry(bm.title, bm.url, isBookmark = true)
+            if (score >= 0 && seenUrls.add(bm.url)) {
+                candidates.add(
+                    ScoredCandidate(
+                        suggestion = OmniboxLocalSuggestion(
+                            title = bm.title.ifBlank { UrlUtils.extractDomain(bm.url) },
+                            url = bm.url,
+                            kind = OmniboxMatchKind.BOOKMARK
+                        ),
+                        score = score
+                    )
+                )
+            }
+        }
+
+        for (item in history) {
+            if (item.url.isBlank()) continue
+            val score = scoreEntry(item.title, item.url, isBookmark = false)
+            if (score >= 0 && seenUrls.add(item.url)) {
+                candidates.add(
+                    ScoredCandidate(
+                        suggestion = OmniboxLocalSuggestion(
+                            title = item.title.ifBlank { UrlUtils.extractDomain(item.url) },
+                            url = item.url,
+                            kind = OmniboxMatchKind.HISTORY
+                        ),
+                        score = score
+                    )
+                )
+            }
+        }
+
+        return candidates
+            .sortedByDescending { it.score }
+            .take(maxResults)
+            .map { it.suggestion }
+    }
+}
+
 data class ActiveTabState(
     val id: String,
     val profileId: String,
@@ -107,6 +203,71 @@ data class ActiveTabState(
     val searchMatchCurrent: Int = 0
 )
 
+data class OmniboxBangInfo(
+    val trigger: String,
+    val providerName: String,
+    val queryText: String,
+    val resolvedUrl: String
+)
+
+object OmniboxBangs {
+    private data class BangRule(
+        val name: String,
+        val homeUrl: String,
+        val searchPrefix: String
+    )
+
+    private val BANG_MAP: Map<String, BangRule> = mapOf(
+        "g" to BangRule("Google", "https://www.google.com", "https://www.google.com/search?q="),
+        "google" to BangRule("Google", "https://www.google.com", "https://www.google.com/search?q="),
+        "ddg" to BangRule("DuckDuckGo", "https://duckduckgo.com", "https://duckduckgo.com/?q="),
+        "brave" to BangRule("Brave Search", "https://search.brave.com", "https://search.brave.com/search?q="),
+        "br" to BangRule("Brave Search", "https://search.brave.com", "https://search.brave.com/search?q="),
+        "b" to BangRule("Bing", "https://www.bing.com", "https://www.bing.com/search?q="),
+        "bing" to BangRule("Bing", "https://www.bing.com", "https://www.bing.com/search?q="),
+        "w" to BangRule("Wikipedia", "https://en.wikipedia.org", "https://en.wikipedia.org/w/index.php?search="),
+        "wiki" to BangRule("Wikipedia", "https://en.wikipedia.org", "https://en.wikipedia.org/w/index.php?search="),
+        "yt" to BangRule("YouTube", "https://www.youtube.com", "https://www.youtube.com/results?search_query="),
+        "youtube" to BangRule("YouTube", "https://www.youtube.com", "https://www.youtube.com/results?search_query="),
+        "gh" to BangRule("GitHub", "https://github.com", "https://github.com/search?q="),
+        "github" to BangRule("GitHub", "https://github.com", "https://github.com/search?q="),
+        "r" to BangRule("Reddit", "https://www.reddit.com", "https://www.reddit.com/search/?q="),
+        "reddit" to BangRule("Reddit", "https://www.reddit.com", "https://www.reddit.com/search/?q="),
+        "so" to BangRule("Stack Overflow", "https://stackoverflow.com", "https://stackoverflow.com/search?q="),
+        "npm" to BangRule("npm", "https://www.npmjs.com", "https://www.npmjs.com/search?q="),
+        "mdn" to BangRule("MDN Docs", "https://developer.mozilla.org", "https://developer.mozilla.org/en-US/search?q="),
+        "amz" to BangRule("Amazon", "https://www.amazon.com", "https://www.amazon.com/s?k="),
+        "hn" to BangRule("Hacker News", "https://news.ycombinator.com", "https://hn.algolia.com/?q="),
+        "maps" to BangRule("Google Maps", "https://www.google.com/maps", "https://www.google.com/maps/search/")
+    )
+
+    /**
+     * Parses a leading `!bang` command (e.g. `!gh kotlin coroutines`, `!yt lofi`, or bare `!gh`).
+     * Returns `null` if [input] does not start with a supported bang token.
+     */
+    fun resolve(input: String): OmniboxBangInfo? {
+        val trimmed = input.trim()
+        if (!trimmed.startsWith("!") || trimmed.length < 2) return null
+
+        val spaceIdx = trimmed.indexOf(' ')
+        val rawBang = if (spaceIdx >= 0) trimmed.substring(1, spaceIdx) else trimmed.substring(1)
+        val key = rawBang.lowercase()
+        val rule = BANG_MAP[key] ?: return null
+        val query = if (spaceIdx >= 0) trimmed.substring(spaceIdx + 1).trim() else ""
+        val targetUrl = if (query.isBlank()) {
+            rule.homeUrl
+        } else {
+            rule.searchPrefix + URLEncoder.encode(query, "UTF-8")
+        }
+        return OmniboxBangInfo(
+            trigger = "!$key",
+            providerName = rule.name,
+            queryText = query,
+            resolvedUrl = targetUrl
+        )
+    }
+}
+
 object UrlUtils {
     private val URL_REGEX = Regex("^(https?://)?[a-zA-Z0-9-]+(\\.[a-zA-Z0-9-]+)+(:[0-9]+)?([/?#].*)?$")
     private val IP_REGEX = Regex("^(https?://)?[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9]+)?([/?#].*)?$")
@@ -114,6 +275,9 @@ object UrlUtils {
     fun parseInputToUrl(input: String, searchEngine: SearchEngine = SearchEngine.GOOGLE): String {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return ""
+
+        // Support DuckDuckGo-style !bang shortcuts (!g, !ddg, !w, !yt, !gh, !r, !so, !mdn, etc.)
+        OmniboxBangs.resolve(trimmed)?.let { return it.resolvedUrl }
 
         if (trimmed.startsWith("http://", ignoreCase = true) || 
             trimmed.startsWith("https://", ignoreCase = true) ||

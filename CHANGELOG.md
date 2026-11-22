@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **🛡️ URL Tracking Sanitizer & Global Privacy Control (GPC)**:
+  - Added `UrlSanitizer` to automatically strip 75+ marketing and click-tracking query parameters (`utm_*`, `fbclid`, `gclid`, `msclkid`, `ttclid`, `yclid`, YouTube `si`, Amazon referral tags, etc.) across omnibox navigation, link clicks, new tabs, and shared/copied URLs while preserving signed cloud/OAuth URLs (`X-Amz-Signature`, SAS `sig`, OAuth `code`/`state`).
+  - Added Global Privacy Control (`navigator.globalPrivacyControl = true`) and Do Not Track (`navigator.doNotTrack = '1'`) document-start injection alongside expanded ad/analytics blocklist coverage, configurable in Settings and Privacy Shield.
+- **⚡ Productivity & Tab Management Upgrades (Zero New Dependencies)**:
+  - **Reopen Closed Tab**: keeps an undo stack of closed non-private tabs per session, accessible from both the Tabs Manager and Browser Menu.
+  - **Open-Tab Search**: filter open tabs instantly by title or URL inside the Tabs Manager.
+  - **Bookmark Editing & Folders**: edit saved bookmark titles, URLs, and folders in place, filter bookmarks by folder chips, and preserve folder hierarchies during Netscape HTML and JSON export/import.
+  - **Print / Save as PDF, Share, Home Screen Shortcut & Offline QR Generator**: print or export any web page as PDF via Android `PrintManager`, share sanitized URLs, pin pages to the Android launcher, and generate scannable ISO/IEC 18004 QR codes completely offline with a pure-Kotlin encoder.
+- **🔍 Hybrid Local + Search Omnibox, `!bang` Shortcuts, Paste & Go & Swipe Tab Switching**:
+  - Address Bar and Bottom Command Bar now surface instant profile-scoped Bookmark and History suggestions above remote search engine completions (automatically disabled in Private Mode), one-tap sanitized **Paste & Go / Paste & Search** from clipboard, and `!bang` shortcuts (`!g`, `!ddg`, `!brave`, `!w`, `!yt`, `!gh`, `!r`, `!so`, `!mdn`, `!hn`, `!npm`, `!maps`).
+  - Swipe horizontally across the top address bar or bottom command pill to cycle smoothly between open tabs.
+- **📖 Offline Web Archiving (`.mht`), Reader Mode Read-Aloud (TTS) & Page Text Zoom**:
+  - **Save Page Offline (`.mht`)**: save complete single-file MHTML snapshots via `WebView.saveWebArchive` into internal offline storage and reopen them directly from Downloads with zero internet connection.
+  - **Reader Mode Read-Aloud**: built-in `android.speech.tts.TextToSpeech` playback with live speed cycling (`0.85x`–`2.0x`) alongside word count and estimated reading time.
+  - **Cookie Consent Auto-Decliner & Page Text Zoom**: automatic GDPR/cookie popup refusal + hiding (OneTrust, Cookiebot, Didomi, Quantcast, Osano, Klaro) and `50%`–`200%` `A- / A+` page text zoom in the Browser Menu and Settings.
 - **🎧 Chromium-Style Media Session Features for Background Playback**: the media notification / lock screen player now behaves like a full media app, matching what Chromium based browsers expose to the system.
   - **Audio focus**: while media plays, Android audio focus is owned by the page's player, so phone calls, alarms and navigation prompts pause the video and resume it afterwards, prompts that only need to be heard duck the volume instead of stopping playback, and unplugging headphones pauses media (`ACTION_AUDIO_BECOMING_NOISY`) — same behaviour as Chromium's audio focus manager.
   - **Skip buttons**: the system media player's rewind / fast forward buttons move the video by 10 seconds at a time, clamped to the start and end of the video.

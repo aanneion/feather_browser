@@ -3,6 +3,8 @@ package com.example.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,6 +16,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -30,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.ReaderArticle
 import com.example.browser.ReaderTheme
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -47,6 +51,104 @@ fun ReaderModeSheet(
     val context = LocalContext.current
     val scrollState = rememberScrollState()
     var showAppearanceControls by remember { mutableStateOf(false) }
+
+    // Native zero-dependency Read-Aloud (TTS) state
+    var ttsEngine by remember { mutableStateOf<TextToSpeech?>(null) }
+    var isTtsReady by remember { mutableStateOf(false) }
+    var isSpeaking by remember { mutableStateOf(false) }
+    var speechRate by remember { mutableStateOf(1.0f) }
+
+    val speechChunks = remember(article?.title, article?.contentText) {
+        if (article == null) {
+            emptyList()
+        } else {
+            val combined = buildString {
+                if (article.title.isNotBlank()) {
+                    append(article.title.trim())
+                    append(".\n\n")
+                }
+                append(article.contentText.trim())
+            }
+            combined
+                .split(Regex("(?<=[.!?\\n])\\s+"))
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .flatMap { sentence ->
+                    if (sentence.length <= 2800) listOf(sentence) else sentence.chunked(2800)
+                }
+        }
+    }
+
+    DisposableEffect(context) {
+        var instance: TextToSpeech? = null
+        try {
+            instance = TextToSpeech(context.applicationContext) { status ->
+                if (status == TextToSpeech.SUCCESS) {
+                    isTtsReady = true
+                    try {
+                        instance?.language = Locale.getDefault()
+                    } catch (_: Throwable) { }
+                    instance?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {
+                            isSpeaking = true
+                        }
+
+                        override fun onDone(utteranceId: String?) {
+                            if (utteranceId == "feather_tts_last") {
+                                isSpeaking = false
+                            }
+                        }
+
+                        @Deprecated("Deprecated in Java")
+                        override fun onError(utteranceId: String?) {
+                            isSpeaking = false
+                        }
+                    })
+                }
+            }
+            ttsEngine = instance
+        } catch (_: Throwable) {
+            isTtsReady = false
+        }
+
+        onDispose {
+            try {
+                instance?.stop()
+                instance?.shutdown()
+            } catch (_: Throwable) { }
+            ttsEngine = null
+            isSpeaking = false
+        }
+    }
+
+    fun startSpeaking() {
+        val engine = ttsEngine
+        if (!isTtsReady || engine == null) {
+            Toast.makeText(context, "Text-to-Speech engine is initializing or unavailable", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (speechChunks.isEmpty()) return
+        try {
+            engine.setSpeechRate(speechRate)
+            engine.stop()
+            speechChunks.forEachIndexed { idx, chunk ->
+                val queueMode = if (idx == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+                val uttId = if (idx == speechChunks.lastIndex) "feather_tts_last" else "feather_tts_$idx"
+                engine.speak(chunk, queueMode, null, uttId)
+            }
+            isSpeaking = true
+        } catch (e: Throwable) {
+            isSpeaking = false
+            Toast.makeText(context, "Unable to read aloud on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun stopSpeaking() {
+        try {
+            ttsEngine?.stop()
+        } catch (_: Throwable) { }
+        isSpeaking = false
+    }
 
     val bgColor = remember(theme) {
         try {
@@ -107,6 +209,50 @@ fun ReaderModeSheet(
                                 fontWeight = FontWeight.SemiBold,
                                 color = textColor,
                                 maxLines = 1
+                            )
+                        }
+
+                        // Read Aloud (TTS) Play / Stop button + speed cycler when speaking
+                        if (isSpeaking) {
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        val nextRate = when (speechRate) {
+                                            0.85f -> 1.0f
+                                            1.0f -> 1.25f
+                                            1.25f -> 1.5f
+                                            1.5f -> 2.0f
+                                            else -> 0.85f
+                                        }
+                                        speechRate = nextRate
+                                        startSpeaking()
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .testTag("reader_tts_speed_chip")
+                            ) {
+                                Text(
+                                    text = "${speechRate}x",
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (isSpeaking) stopSpeaking() else startSpeaking()
+                            },
+                            enabled = article != null,
+                            modifier = Modifier.testTag("reader_tts_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
+                                contentDescription = if (isSpeaking) "Stop Read Aloud" else "Listen to Article",
+                                tint = if (isSpeaking) MaterialTheme.colorScheme.primary else textColor
                             )
                         }
 

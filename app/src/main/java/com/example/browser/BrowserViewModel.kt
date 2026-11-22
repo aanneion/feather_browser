@@ -19,6 +19,7 @@ import com.example.data.BrowserRepository
 import com.example.data.model.*
 import com.example.privacy.ContentBlocker
 import com.example.privacy.PrivacyManager
+import com.example.privacy.UrlSanitizer
 import com.example.privacy.WebViewProfileManager
 import com.example.weather.WeatherRepository
 import com.example.weather.WeatherUiState
@@ -182,7 +183,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         openInBackground: Boolean = false,
         isPrivate: Boolean = _isPrivateMode.value
     ) {
-        val secureUrl = UrlUtils.applyHttpsMode(url, httpsMode.value)
+        val cleanedUrl = UrlSanitizer.sanitize(url, stripTrackingParams.value)
+        val secureUrl = UrlUtils.applyHttpsMode(cleanedUrl, httpsMode.value)
         if (secureUrl == null) {
             Toast.makeText(context, "HTTPS-only mode blocked this insecure link", Toast.LENGTH_SHORT).show()
             return
@@ -201,10 +203,10 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             )
             repository.saveTab(newTab)
             if (httpsMode.value == HttpsMode.PREFER_HTTPS &&
-                url.startsWith("http://", ignoreCase = true) &&
-                secureUrl != url
+                cleanedUrl.startsWith("http://", ignoreCase = true) &&
+                secureUrl != cleanedUrl
             ) {
-                httpsFallbackUrls[tabId] = url
+                httpsFallbackUrls[tabId] = cleanedUrl
             }
             if (!openInBackground) {
                 if (isPrivate && !_isPrivateMode.value) {
@@ -244,6 +246,22 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     val isWeatherOnNewTab = MutableStateFlow(preferences.isWeatherOnNewTab())
     val isWeatherFahrenheit = MutableStateFlow(preferences.isWeatherFahrenheit())
     val toolbarPosition = MutableStateFlow(preferences.getToolbarPosition())
+    val stripTrackingParams = MutableStateFlow(preferences.isStripTrackingParamsEnabled())
+    val sendPrivacySignals = MutableStateFlow(preferences.isSendPrivacySignalsEnabled())
+    val hideCookieBanners = MutableStateFlow(preferences.isHideCookieBannersEnabled())
+    val pageTextZoom = MutableStateFlow(preferences.getDefaultTextZoom())
+
+    // Recently closed non-private tabs (per profile, capped at 10) for Undo / Reopen Closed Tab
+    private val _recentlyClosedTabs = MutableStateFlow<List<BrowserTab>>(emptyList())
+    val recentlyClosedTabs: StateFlow<List<BrowserTab>> = _recentlyClosedTabs.asStateFlow()
+
+    val canReopenClosedTab: StateFlow<Boolean> = combine(
+        _recentlyClosedTabs,
+        _currentProfileId,
+        _isPrivateMode
+    ) { closed, profileId, isPrivate ->
+        !isPrivate && closed.any { it.profileId == profileId }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
 
     // Bumped when the active profile's fingerprint / user-agent changes. WebViews are
     // recreated so the new identity is installed at document start instead of lingering
@@ -368,6 +386,40 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun setDownloadProvider(provider: DownloadProvider) {
         downloadProvider.value = provider
         preferences.setDownloadProvider(provider)
+    }
+
+    fun setStripTrackingParams(enabled: Boolean) {
+        stripTrackingParams.value = enabled
+        preferences.setStripTrackingParamsEnabled(enabled)
+    }
+
+    fun setSendPrivacySignals(enabled: Boolean) {
+        sendPrivacySignals.value = enabled
+        preferences.setSendPrivacySignalsEnabled(enabled)
+    }
+
+    fun setHideCookieBanners(enabled: Boolean) {
+        hideCookieBanners.value = enabled
+        preferences.setHideCookieBannersEnabled(enabled)
+    }
+
+    fun setPageTextZoom(zoomPercent: Int) {
+        val clamped = zoomPercent.coerceIn(50, 200)
+        pageTextZoom.value = clamped
+        preferences.setDefaultTextZoom(clamped)
+    }
+
+    fun switchAdjacentTab(next: Boolean) {
+        val tabs = currentTabs.value
+        if (tabs.size <= 1) return
+        val currentIdx = tabs.indexOfFirst { it.id == _activeTabId.value }
+        val baseIdx = if (currentIdx >= 0) currentIdx else 0
+        val targetIdx = if (next) {
+            (baseIdx + 1) % tabs.size
+        } else {
+            (baseIdx - 1 + tabs.size) % tabs.size
+        }
+        selectTab(tabs[targetIdx].id, autoDismiss = false)
     }
 
     // Whitelisted domains flow
@@ -648,6 +700,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun deleteProfile(profileId: String) {
         if (profileId == WebViewProfileManager.DEFAULT_PROFILE_ID) return // Protect default profile
+        _recentlyClosedTabs.update { list -> list.filterNot { it.profileId == profileId } }
         viewModelScope.launch {
             repository.deleteProfile(profileId)
             if (_currentProfileId.value == profileId) {
@@ -726,10 +779,50 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         selectTab(tabId, autoDismiss = false)
     }
 
+    private fun pushClosedTabForUndo(tab: BrowserTab) {
+        if (tab.isPrivate) return
+        if (tab.url.isBlank() || tab.url == "about:blank") return
+        _recentlyClosedTabs.update { existing ->
+            (listOf(tab) + existing.filterNot { it.id == tab.id }).take(10)
+        }
+    }
+
+    fun reopenLastClosedTab() {
+        if (_isPrivateMode.value) return
+        val profileId = _currentProfileId.value
+        val candidate = _recentlyClosedTabs.value.firstOrNull { it.profileId == profileId } ?: return
+        _recentlyClosedTabs.update { list -> list.filterNot { it.id == candidate.id } }
+
+        viewModelScope.launch {
+            val restoredTab = candidate.copy(
+                id = UUID.randomUUID().toString(),
+                lastAccessedAt = System.currentTimeMillis(),
+                isPrivate = false
+            )
+            repository.saveTab(restoredTab)
+            activateTab(restoredTab, autoDismiss = false)
+        }
+    }
+
     fun closeTab(tabId: String) {
         viewModelScope.launch {
             val allTabs = currentTabs.value
             val closedIndex = allTabs.indexOfFirst { it.id == tabId }
+            val closedTab = allTabs.getOrNull(closedIndex)
+            if (closedTab != null) {
+                // Capture latest live URL/title if closing the currently active tab
+                val liveTab = if (_activeTabState.value?.id == tabId) {
+                    val state = _activeTabState.value!!
+                    closedTab.copy(
+                        url = state.url.ifBlank { closedTab.url },
+                        title = state.title.ifBlank { closedTab.title },
+                        isDesktopMode = state.isDesktopMode
+                    )
+                } else {
+                    closedTab
+                }
+                pushClosedTabForUndo(liveTab)
+            }
             repository.deleteTab(tabId)
             navigationStates.remove(tabId)
             recordedHistoryUrls.remove(tabId)
@@ -757,6 +850,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun closeAllTabs() {
         viewModelScope.launch {
+            if (!_isPrivateMode.value) {
+                currentTabs.value.forEach(::pushClosedTabForUndo)
+            }
             try {
                 com.example.media.MediaSessionManager.stopPlayback(context)
             } catch (e: Throwable) { }
@@ -776,7 +872,8 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     fun navigateTo(input: String) {
         setBarsVisible(true)
-        val parsedUrl = UrlUtils.parseInputToUrl(input, searchEngine.value)
+        val rawParsedUrl = UrlUtils.parseInputToUrl(input, searchEngine.value)
+        val parsedUrl = UrlSanitizer.sanitize(rawParsedUrl, stripTrackingParams.value)
         val secureUrl = UrlUtils.applyHttpsMode(parsedUrl, httpsMode.value)
         if (secureUrl == null) {
             Toast.makeText(context, "HTTPS-only mode blocked this insecure address", Toast.LENGTH_SHORT).show()
@@ -1188,6 +1285,136 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun updateBookmark(bookmark: Bookmark) {
+        viewModelScope.launch {
+            repository.updateBookmark(bookmark)
+            Toast.makeText(context, "Bookmark updated", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun printCurrentPage() {
+        val tabId = _activeTabId.value
+        val tab = _activeTabState.value
+        if (tabId.isBlank() || tab == null || tab.url.isBlank() || tab.url == "about:blank") return
+        val docName = tab.title.takeIf { it.isNotBlank() && it != "New Tab" }
+            ?: UrlUtils.extractDomain(tab.url).ifBlank { "Feather_Page" }
+        viewModelScope.launch {
+            _webViewActionEvent.emit(
+                WebViewAction.PrintPage(
+                    documentName = docName,
+                    targetTabId = tabId
+                )
+            )
+        }
+    }
+
+    fun saveCurrentPageOffline() {
+        val tabId = _activeTabId.value
+        val tab = _activeTabState.value
+        if (tabId.isBlank() || tab == null || tab.url.isBlank() || tab.url == "about:blank") return
+
+        val archiveDir = java.io.File(context.filesDir, "offline_pages").apply { mkdirs() }
+        val baseTitle = (tab.title.takeIf { it.isNotBlank() && it != "New Tab" }
+            ?: UrlUtils.extractDomain(tab.url).ifBlank { "page" })
+            .replace(Regex("[^a-zA-Z0-9._-]+"), "_")
+            .trim('_')
+            .take(48)
+            .ifBlank { "saved_page" }
+        val filename = "${baseTitle}_${System.currentTimeMillis() / 1000}.mht"
+        val destFile = java.io.File(archiveDir, filename)
+        val profileId = _currentProfileId.value
+        val sourceUrl = tab.url
+
+        viewModelScope.launch {
+            _webViewActionEvent.emit(
+                WebViewAction.SaveOfflineArchive(
+                    destinationPath = destFile.absolutePath,
+                    onResult = { savedPath ->
+                        if (!savedPath.isNullOrBlank()) {
+                            val savedFile = java.io.File(savedPath)
+                            val fileUri = Uri.fromFile(savedFile).toString()
+                            viewModelScope.launch {
+                                repository.recordDownload(
+                                    profileId = profileId,
+                                    url = sourceUrl,
+                                    filename = savedFile.name,
+                                    mimeType = "multipart/related",
+                                    sizeBytes = savedFile.length(),
+                                    uri = fileUri,
+                                    status = "COMPLETED"
+                                )
+                                Toast.makeText(
+                                    context,
+                                    "Saved offline page (${savedFile.name}) — tap in Downloads to open",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        } else {
+                            Toast.makeText(context, "Unable to save offline archive for this page", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    targetTabId = tabId
+                )
+            )
+        }
+    }
+
+    fun shareCurrentPage() {
+        val tab = _activeTabState.value ?: return
+        val rawUrl = tab.url
+        if (rawUrl.isBlank() || rawUrl == "about:blank") return
+        val cleanShareUrl = UrlSanitizer.sanitize(rawUrl, stripTrackingParams.value)
+        try {
+            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                if (tab.title.isNotBlank() && tab.title != rawUrl) {
+                    putExtra(Intent.EXTRA_SUBJECT, tab.title)
+                }
+                putExtra(Intent.EXTRA_TEXT, cleanShareUrl)
+            }
+            val chooser = Intent.createChooser(shareIntent, "Share page").apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(chooser)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Unable to share link", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun addCurrentPageToHomeScreen() {
+        val tab = _activeTabState.value ?: return
+        val rawUrl = tab.url
+        if (rawUrl.isBlank() || rawUrl == "about:blank") return
+        val cleanUrl = UrlSanitizer.sanitize(rawUrl, stripTrackingParams.value)
+        val label = tab.title.takeIf { it.isNotBlank() && it != rawUrl }
+            ?: UrlUtils.extractDomain(cleanUrl).ifBlank { "Website" }
+
+        try {
+            val launchIntent = Intent(Intent.ACTION_VIEW, Uri.parse(cleanUrl)).apply {
+                setPackage(context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            val shortcutId = "web_" + cleanUrl.hashCode().toUInt().toString(16)
+            val shortcut = androidx.core.content.pm.ShortcutInfoCompat.Builder(context, shortcutId)
+                .setShortLabel(label.take(24))
+                .setLongLabel(label.take(48))
+                .setIcon(androidx.core.graphics.drawable.IconCompat.createWithResource(context, com.example.R.mipmap.ic_launcher))
+                .setIntent(launchIntent)
+                .build()
+
+            if (androidx.core.content.pm.ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+                val requested = androidx.core.content.pm.ShortcutManagerCompat.requestPinShortcut(context, shortcut, null)
+                if (!requested) {
+                    Toast.makeText(context, "Home screen shortcuts are disabled by your launcher", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Toast.makeText(context, "Your launcher does not support pinned shortcuts", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Toast.makeText(context, "Unable to add shortcut: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun exportBookmarksHtml(profileName: String = "Feather"): String {
         return BookmarkExportHelper.exportToNetscapeHtml(bookmarks.value, profileName)
     }
@@ -1210,6 +1437,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             repository.clearHistoryForProfile(_currentProfileId.value)
             recordedHistoryUrls.clear()
+            _recentlyClosedTabs.update { list -> list.filterNot { it.profileId == _currentProfileId.value } }
             Toast.makeText(context, "History cleared", Toast.LENGTH_SHORT).show()
         }
     }
@@ -1329,6 +1557,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             }
 
             val targetUri = resolvedUri ?: storedUri ?: Uri.parse(item.url)
+            val isLocalOfflineArchive = targetUri.scheme == "file" &&
+                (item.filename.endsWith(".mht", ignoreCase = true) ||
+                    item.filename.endsWith(".mhtml", ignoreCase = true) ||
+                    item.mimeType.equals("multipart/related", ignoreCase = true) ||
+                    item.mimeType.equals("message/rfc822", ignoreCase = true))
+
+            if (isLocalOfflineArchive) {
+                val archivePath = targetUri.path
+                val archiveFile = archivePath?.let { java.io.File(it) }
+                if (archiveFile == null || !archiveFile.exists()) {
+                    Toast.makeText(context, "Offline page file was deleted", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                dismissSheet()
+                navigateTo(targetUri.toString())
+                return
+            }
+
             val intent = Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(targetUri, item.mimeType.ifBlank { "application/octet-stream" })
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -1434,6 +1680,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     // Clear Data Action
     fun executeClearData(history: Boolean, cookies: Boolean, cache: Boolean, siteData: Boolean, downloads: Boolean) {
+        if (history) {
+            _recentlyClosedTabs.value = emptyList()
+        }
         viewModelScope.launch {
             privacyManager.clearBrowsingData(
                 clearHistory = history,
@@ -1460,6 +1709,12 @@ sealed class WebViewAction {
     data class FindAllAsync(val query: String, override val targetTabId: String? = null) : WebViewAction()
     data class FindNext(val forward: Boolean, override val targetTabId: String? = null) : WebViewAction()
     data class ClearFindMatches(override val targetTabId: String? = null) : WebViewAction()
+    data class PrintPage(val documentName: String, override val targetTabId: String? = null) : WebViewAction()
+    data class SaveOfflineArchive(
+        val destinationPath: String,
+        val onResult: (String?) -> Unit,
+        override val targetTabId: String? = null
+    ) : WebViewAction()
     data class ExtractReaderContent(
         val callback: (ReaderArticle?) -> Unit,
         override val targetTabId: String? = null

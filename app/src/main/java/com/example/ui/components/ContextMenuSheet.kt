@@ -39,6 +39,7 @@ fun ContextMenuSheet(
     onCopyImageAddress: (String) -> Unit,
     onShareImage: (String) -> Unit,
     onDismiss: () -> Unit,
+    onShowQrCode: ((String, String) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val modalBottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -189,6 +190,18 @@ fun ContextMenuSheet(
                         onShareLink(data.url!!)
                     }
                 )
+
+                if (onShowQrCode != null) {
+                    ContextMenuActionItem(
+                        icon = Icons.Outlined.QrCode2,
+                        title = "Show QR code for link",
+                        testTag = "context_menu_qr_link",
+                        onClick = {
+                            onDismiss()
+                            onShowQrCode(data.url!!, data.title ?: "")
+                        }
+                    )
+                }
             }
 
             // Image Actions

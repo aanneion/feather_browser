@@ -27,6 +27,10 @@ fun PrivacyShieldDialog(
     activeTab: ActiveTabState?,
     isGlobalBlockerEnabled: Boolean,
     isSiteWhitelisted: Boolean,
+    stripTrackingParams: Boolean = true,
+    onToggleStripTrackingParams: ((Boolean) -> Unit)? = null,
+    hideCookieBanners: Boolean = true,
+    onToggleHideCookieBanners: ((Boolean) -> Unit)? = null,
     onToggleGlobalBlocker: (Boolean) -> Unit,
     onToggleSiteException: () -> Unit,
     onDismiss: () -> Unit,
@@ -293,6 +297,81 @@ fun PrivacyShieldDialog(
                         onCheckedChange = onToggleGlobalBlocker,
                         modifier = Modifier.testTag("global_shield_switch")
                     )
+                }
+            }
+
+            if (onToggleStripTrackingParams != null) {
+                val strippedSessionCount = com.example.privacy.UrlSanitizer.getTotalStrippedInSession()
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "URL Tracking Sanitizer",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = if (strippedSessionCount > 0) {
+                                    "Stripped $strippedSessionCount tracking parameter${if (strippedSessionCount == 1) "" else "s"} this session"
+                                } else {
+                                    "Strips utm_*, fbclid, gclid, and click trackers before loading"
+                                },
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = stripTrackingParams,
+                            onCheckedChange = onToggleStripTrackingParams,
+                            modifier = Modifier.testTag("url_sanitizer_shield_switch")
+                        )
+                    }
+                }
+            }
+
+            if (onToggleHideCookieBanners != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Cookie Banner Auto-Decliner",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Auto-rejects GDPR/cookie consent popups and restores page scrolling",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = hideCookieBanners,
+                            onCheckedChange = onToggleHideCookieBanners,
+                            modifier = Modifier.testTag("cookie_banner_shield_switch")
+                        )
+                    }
                 }
             }
 

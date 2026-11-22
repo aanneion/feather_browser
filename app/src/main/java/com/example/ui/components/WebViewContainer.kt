@@ -29,6 +29,7 @@ import com.example.browser.WebViewAction
 import com.example.data.model.BrowserProfile
 import com.example.privacy.ContentBlocker
 import com.example.privacy.FingerprintScriptGenerator
+import com.example.privacy.UrlSanitizer
 import com.example.privacy.WebViewProfileManager
 import com.example.privacy.YouTubeAdBlocker
 import com.example.media.MediaControlAction
@@ -95,6 +96,8 @@ private fun installDocumentStartScripts(
     profileId: String,
     adBlockEnabled: Boolean,
     backgroundPlayEnabled: Boolean,
+    sendPrivacySignals: Boolean,
+    hideCookieBanners: Boolean,
     preset: FingerprintPreset,
     customUserAgent: String?,
     isPrivate: Boolean
@@ -114,6 +117,12 @@ private fun installDocumentStartScripts(
     scripts += FingerprintScriptGenerator.generateMediaSessionScript() to MEDIA_SCRIPT_ORIGINS
     if (backgroundPlayEnabled) {
         scripts += FingerprintScriptGenerator.generateBackgroundPlayShimScript() to MEDIA_SCRIPT_ORIGINS
+    }
+    if (sendPrivacySignals) {
+        scripts += FingerprintScriptGenerator.generatePrivacySignalsScript() to setOf("*")
+    }
+    if (hideCookieBanners) {
+        scripts += FingerprintScriptGenerator.generateCookieBannerHiderScript() to setOf("*")
     }
     val shouldInjectFingerprint = !isPrivate &&
         (preset != FingerprintPreset.DEFAULT || !customUserAgent.isNullOrBlank())
@@ -385,6 +394,10 @@ fun WebViewContainer(
     isActive: Boolean = true,
     isPrivate: Boolean = false,
     profileIdentityVersion: Int = 0,
+    stripTrackingParams: Boolean = true,
+    sendPrivacySignals: Boolean = true,
+    hideCookieBanners: Boolean = true,
+    pageTextZoom: Int = 100,
     isAddressBarEditing: Boolean = false,
     onDismissAddressBar: (() -> Unit)? = null,
     modifier: Modifier = Modifier
@@ -496,6 +509,9 @@ fun WebViewContainer(
     val currentWhitelistedDomains by rememberUpdatedState(whitelistedDomains)
     val currentBlockThirdPartyCookies by rememberUpdatedState(blockThirdPartyCookies)
     val currentEnableBackgroundPlay by rememberUpdatedState(enableBackgroundPlay)
+    val currentStripTrackingParams by rememberUpdatedState(stripTrackingParams)
+    val currentSendPrivacySignals by rememberUpdatedState(sendPrivacySignals)
+    val currentHideCookieBanners by rememberUpdatedState(hideCookieBanners)
     val currentPresetState by rememberUpdatedState(activePreset)
     val currentCustomUserAgentState by rememberUpdatedState(effectiveCustomUserAgent)
 
@@ -510,7 +526,21 @@ fun WebViewContainer(
             }
             when (action) {
                 is WebViewAction.LoadUrl -> {
-                    webView.loadUrl(action.url)
+                    val safeOfflinePrefix = "file://${context.filesDir.absolutePath}/offline_pages/"
+                    webView.settings.allowFileAccess = action.url.startsWith(safeOfflinePrefix)
+                    val headers = if (currentSendPrivacySignals &&
+                        (action.url.startsWith("http://", ignoreCase = true) ||
+                            action.url.startsWith("https://", ignoreCase = true))
+                    ) {
+                        mapOf("Sec-GPC" to "1", "DNT" to "1")
+                    } else {
+                        emptyMap()
+                    }
+                    if (headers.isNotEmpty()) {
+                        webView.loadUrl(action.url, headers)
+                    } else {
+                        webView.loadUrl(action.url)
+                    }
                 }
                 is WebViewAction.Reload -> {
                     webView.reload()
@@ -548,6 +578,38 @@ fun WebViewContainer(
                 }
                 is WebViewAction.ClearFindMatches -> {
                     webView.clearMatches()
+                }
+                is WebViewAction.PrintPage -> {
+                    try {
+                        val activity = context.findActivity()
+                        val printManager = (activity ?: context)
+                            .getSystemService(Context.PRINT_SERVICE) as? android.print.PrintManager
+                        if (printManager != null) {
+                            val safeJobName = action.documentName
+                                .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                                .take(60)
+                                .ifBlank { "Feather_Page" }
+                            val printAdapter = webView.createPrintDocumentAdapter(safeJobName)
+                            printManager.print(
+                                safeJobName,
+                                printAdapter,
+                                android.print.PrintAttributes.Builder().build()
+                            )
+                        } else {
+                            android.widget.Toast.makeText(context, "Print service unavailable on this device", android.widget.Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Throwable) {
+                        android.widget.Toast.makeText(context, "Unable to print page: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+                is WebViewAction.SaveOfflineArchive -> {
+                    try {
+                        webView.saveWebArchive(action.destinationPath, false) { savedPath ->
+                            action.onResult(savedPath)
+                        }
+                    } catch (e: Throwable) {
+                        action.onResult(null)
+                    }
                 }
                 is WebViewAction.ExtractReaderContent -> {
                     val script = """
@@ -651,6 +713,8 @@ fun WebViewContainer(
         effectiveProfileId,
         isAdBlockEnabled,
         enableBackgroundPlay,
+        sendPrivacySignals,
+        hideCookieBanners,
         activePreset,
         effectiveCustomUserAgent,
         isPrivate
@@ -662,6 +726,8 @@ fun WebViewContainer(
                 profileId = effectiveProfileId,
                 adBlockEnabled = isAdBlockEnabled,
                 backgroundPlayEnabled = enableBackgroundPlay,
+                sendPrivacySignals = sendPrivacySignals,
+                hideCookieBanners = hideCookieBanners,
                 preset = activePreset,
                 customUserAgent = effectiveCustomUserAgent,
                 isPrivate = isPrivate
@@ -669,6 +735,12 @@ fun WebViewContainer(
         }
         val currentUrl = webView.url ?: return@LaunchedEffect
         try {
+            if (sendPrivacySignals) {
+                webView.evaluateJavascript(FingerprintScriptGenerator.generatePrivacySignalsScript(), null)
+            }
+            if (hideCookieBanners) {
+                webView.evaluateJavascript(FingerprintScriptGenerator.generateCookieBannerHiderScript(), null)
+            }
             if (isMediaSite(currentUrl)) {
                 webView.evaluateJavascript(FingerprintScriptGenerator.generateMediaSessionScript(), null)
                 if (enableBackgroundPlay) {
@@ -844,7 +916,8 @@ fun WebViewContainer(
                             setSupportZoom(true)
                             builtInZoomControls = true
                             displayZoomControls = false
-                            allowFileAccess = false
+                            textZoom = pageTextZoom.coerceIn(50, 200)
+                            allowFileAccess = initialUrl.startsWith("file://${context.filesDir.absolutePath}/offline_pages/")
                             allowContentAccess = false
                             setSupportMultipleWindows(true)
                             mediaPlaybackRequiresUserGesture = false
@@ -958,6 +1031,18 @@ fun WebViewContainer(
                                                 null
                                             )
                                         }
+                                        if (currentSendPrivacySignals) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generatePrivacySignalsScript(),
+                                                null
+                                            )
+                                        }
+                                        if (currentHideCookieBanners) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generateCookieBannerHiderScript(),
+                                                null
+                                            )
+                                        }
                                     } catch (e: Exception) { }
                                 }
                             }
@@ -1003,6 +1088,18 @@ fun WebViewContainer(
                                         if (currentAdBlockEnabled && YouTubeAdBlocker.isYouTube(finishedUrl)) {
                                             view?.evaluateJavascript(
                                                 YouTubeAdBlocker.getYouTubeAdBlockScript(),
+                                                null
+                                            )
+                                        }
+                                        if (currentSendPrivacySignals) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generatePrivacySignalsScript(),
+                                                null
+                                            )
+                                        }
+                                        if (currentHideCookieBanners) {
+                                            view?.evaluateJavascript(
+                                                FingerprintScriptGenerator.generateCookieBannerHiderScript(),
                                                 null
                                             )
                                         }
@@ -1136,13 +1233,14 @@ fun WebViewContainer(
                             }
 
                             private fun handleUrlOverride(view: WebView?, url: String): Boolean {
+                                val sanitizedUrl = UrlSanitizer.sanitize(url, currentStripTrackingParams)
                                 // Route HTTP links through the ViewModel so Prefer HTTPS can
                                 // retry the original address when the upgrade is unavailable.
-                                if (url.startsWith("http://", ignoreCase = true) && currentHttpsMode != HttpsMode.NORMAL) {
+                                if (sanitizedUrl.startsWith("http://", ignoreCase = true) && currentHttpsMode != HttpsMode.NORMAL) {
                                     if (viewModel.activeTabId.value == tabId) {
-                                        viewModel.navigateTo(url)
+                                        viewModel.navigateTo(sanitizedUrl)
                                     } else {
-                                        val upgradedUrl = com.example.browser.UrlUtils.applyHttpsMode(url, currentHttpsMode)
+                                        val upgradedUrl = com.example.browser.UrlUtils.applyHttpsMode(sanitizedUrl, currentHttpsMode)
                                         if (upgradedUrl == null) {
                                             android.widget.Toast.makeText(context, "HTTPS-only mode blocked this insecure link", android.widget.Toast.LENGTH_SHORT).show()
                                         } else {
@@ -1151,7 +1249,7 @@ fun WebViewContainer(
                                     }
                                     return true
                                 }
-                                val secureUrl = com.example.browser.UrlUtils.applyHttpsMode(url, currentHttpsMode)
+                                val secureUrl = com.example.browser.UrlUtils.applyHttpsMode(sanitizedUrl, currentHttpsMode)
                                 if (secureUrl == null) {
                                     android.widget.Toast.makeText(context, "HTTPS-only mode blocked this insecure link", android.widget.Toast.LENGTH_SHORT).show()
                                     return true
@@ -1160,12 +1258,16 @@ fun WebViewContainer(
                                     view?.loadUrl(secureUrl)
                                     return true
                                 }
-                                if (url.startsWith("http://", ignoreCase = true) || 
-                                    url.startsWith("https://", ignoreCase = true) ||
-                                    url.startsWith("about:", ignoreCase = true) ||
-                                    url.startsWith("javascript:", ignoreCase = true) ||
-                                    url.startsWith("data:", ignoreCase = true) ||
-                                    url.startsWith("blob:", ignoreCase = true)) {
+                                if (sanitizedUrl.startsWith("file://", ignoreCase = true)) {
+                                    val safeOfflinePrefix = "file://${context.filesDir.absolutePath}/offline_pages/"
+                                    return !sanitizedUrl.startsWith(safeOfflinePrefix)
+                                }
+                                if (sanitizedUrl.startsWith("http://", ignoreCase = true) || 
+                                    sanitizedUrl.startsWith("https://", ignoreCase = true) ||
+                                    sanitizedUrl.startsWith("about:", ignoreCase = true) ||
+                                    sanitizedUrl.startsWith("javascript:", ignoreCase = true) ||
+                                    sanitizedUrl.startsWith("data:", ignoreCase = true) ||
+                                    sanitizedUrl.startsWith("blob:", ignoreCase = true)) {
                                     return false
                                 }
 
@@ -1373,6 +1475,8 @@ fun WebViewContainer(
                             profileId = effectiveProfileId,
                             adBlockEnabled = isAdBlockEnabled,
                             backgroundPlayEnabled = enableBackgroundPlay,
+                            sendPrivacySignals = sendPrivacySignals,
+                            hideCookieBanners = hideCookieBanners,
                             preset = activePreset,
                             customUserAgent = effectiveCustomUserAgent,
                             isPrivate = isPrivate
@@ -1381,7 +1485,14 @@ fun WebViewContainer(
                         webViewRef = this
                         MediaSessionManager.registerWebView(tabId, this)
                         if (initialUrl.isNotBlank() && initialUrl != "about:blank") {
-                            loadUrl(initialUrl)
+                            if (sendPrivacySignals &&
+                                (initialUrl.startsWith("http://", ignoreCase = true) ||
+                                    initialUrl.startsWith("https://", ignoreCase = true))
+                            ) {
+                                loadUrl(initialUrl, mapOf("Sec-GPC" to "1", "DNT" to "1"))
+                            } else {
+                                loadUrl(initialUrl)
+                            }
                         }
                     }
                 },
@@ -1393,6 +1504,11 @@ fun WebViewContainer(
                         webView.allowBackgroundPlayback = enableBackgroundPlay
                         webView.isAddressBarEditing = isAddressBarEditing
                         webView.onDismissAddressBar = onDismissAddressBar
+                    }
+
+                    val desiredZoom = pageTextZoom.coerceIn(50, 200)
+                    if (webView.settings.textZoom != desiredZoom) {
+                        webView.settings.textZoom = desiredZoom
                     }
 
                     val desiredUserAgent = when {

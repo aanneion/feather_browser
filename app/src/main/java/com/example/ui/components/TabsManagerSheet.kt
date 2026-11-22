@@ -54,7 +54,9 @@ fun TabsManagerScreen(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     profiles: List<BrowserProfile> = emptyList(),
-    onSelectProfile: ((String) -> Unit)? = null
+    onSelectProfile: ((String) -> Unit)? = null,
+    canReopenClosedTab: Boolean = false,
+    onReopenClosedTab: (() -> Unit)? = null
 ) {
     // Chromium shows an equalizer badge on the tab that is producing sound; the same
     // indicator is rendered on the tab card so the audible tab can be told apart at a glance.
@@ -73,6 +75,16 @@ fun TabsManagerScreen(
 
     val listState = rememberLazyListState()
     var showCloseAllDialog by remember { mutableStateOf(false) }
+    var isSearchVisible by remember { mutableStateOf(false) }
+    var tabSearchQuery by remember { mutableStateOf("") }
+
+    val displayedTabs = remember(tabs, tabSearchQuery) {
+        val q = tabSearchQuery.trim()
+        if (q.isBlank()) tabs
+        else tabs.filter {
+            it.title.contains(q, ignoreCase = true) || it.url.contains(q, ignoreCase = true)
+        }
+    }
 
     // Scroll to active tab on open once without jumping on tab closure
     LaunchedEffect(Unit) {
@@ -215,6 +227,43 @@ fun TabsManagerScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
+                    // Search Open Tabs Toggle (shown when 2+ tabs exist)
+                    if (tabs.size >= 2) {
+                        IconButton(
+                            onClick = {
+                                isSearchVisible = !isSearchVisible
+                                if (!isSearchVisible) tabSearchQuery = ""
+                            },
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("search_tabs_toggle_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isSearchVisible) Icons.Filled.SearchOff else Icons.Outlined.Search,
+                                contentDescription = "Filter Open Tabs",
+                                tint = if (isSearchVisible) profileColor else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    // Undo / Reopen Closed Tab Button
+                    if (canReopenClosedTab && onReopenClosedTab != null) {
+                        IconButton(
+                            onClick = onReopenClosedTab,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("reopen_closed_tab_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Restore,
+                                contentDescription = "Reopen Closed Tab",
+                                tint = profileColor,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
                     // Private Mode Switcher
                     IconButton(
                         onClick = onTogglePrivateMode,
@@ -249,8 +298,40 @@ fun TabsManagerScreen(
                     }
                 }
 
+                if (isSearchVisible && tabs.isNotEmpty()) {
+                    OutlinedTextField(
+                        value = tabSearchQuery,
+                        onValueChange = { tabSearchQuery = it },
+                        placeholder = { Text("Filter ${tabs.size} open tabs...", fontSize = 13.sp) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            if (tabSearchQuery.isNotEmpty()) {
+                                IconButton(onClick = { tabSearchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Clear filter",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 4.dp)
+                            .testTag("tab_filter_input")
+                    )
+                }
+
                 // Horizontal Carousel of Tabs
-                if (tabs.isEmpty()) {
+                if (displayedTabs.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -266,11 +347,26 @@ fun TabsManagerScreen(
                             )
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "No open tabs",
+                                text = if (tabs.isEmpty()) "No open tabs" else "No open tabs matching \"$tabSearchQuery\"",
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (tabs.isEmpty() && canReopenClosedTab && onReopenClosedTab != null) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                FilledTonalButton(
+                                    onClick = onReopenClosedTab,
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Restore,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Reopen Closed Tab", fontSize = 13.sp)
+                                }
+                            }
                         }
                     }
                 } else {
@@ -282,7 +378,7 @@ fun TabsManagerScreen(
                             .fillMaxWidth()
                             .height(320.dp)
                     ) {
-                        items(tabs, key = { it.id }) { tab ->
+                        items(displayedTabs, key = { it.id }) { tab ->
                             val isActive = tab.id == activeTabId
                             DownsideTabCard(
                                 tab = tab,

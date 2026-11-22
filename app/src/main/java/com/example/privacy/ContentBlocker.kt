@@ -130,6 +130,7 @@ object ContentBlocker {
         "mouseflow.com",
         "mixpanel.com",
         "segment.io",
+        "segment.com",
         "amplitude.com",
         "appsflyer.com",
         "adjust.com",
@@ -143,7 +144,28 @@ object ContentBlocker {
         "heapanalytics.com",
         "statcounter.com",
         "yandex.ru/metrika",
-        "mc.yandex.ru"
+        "mc.yandex.ru",
+        "logrocket.io",
+        "logrocket.com",
+        "posthog.com",
+        "rudderstack.com",
+        "braze.com",
+        "cleverpush.com",
+        "onesignal.com",
+        "teads.tv",
+        "triplelift.com",
+        "sharethrough.com",
+        "indexexchange.com",
+        "33across.com",
+        "sovrn.com",
+        "lijit.com",
+        "connect.facebook.net",
+        "analytics.tiktok.com",
+        "ads-twitter.com",
+        "t.co/i/adsct",
+        "snap.licdn.com",
+        "px.ads.linkedin.com",
+        "bat.bing.com"
     )
 
     private val blockedPathKeywords = arrayOf(
@@ -178,7 +200,19 @@ object ContentBlocker {
         "heapanalytics.com",
         "statcounter.com",
         "yandex.ru/metrika",
-        "mc.yandex.ru"
+        "mc.yandex.ru",
+        "segment.com",
+        "logrocket.io",
+        "logrocket.com",
+        "posthog.com",
+        "rudderstack.com",
+        "braze.com",
+        "onesignal.com",
+        "connect.facebook.net",
+        "analytics.tiktok.com",
+        "snap.licdn.com",
+        "px.ads.linkedin.com",
+        "bat.bing.com"
     )
 
     private val trackerPathKeywords = arrayOf(

@@ -895,6 +895,44 @@ object FingerprintScriptGenerator {
         generateBackgroundPlayScript(includeBackgroundPlay = true, includeMediaSession = false)
 
     /**
+     * Injects W3C Global Privacy Control (`navigator.globalPrivacyControl = true`) and
+     * legacy Do Not Track (`navigator.doNotTrack = '1'`) signals at document start.
+     */
+    fun generatePrivacySignalsScript(): String {
+        return """
+        (function() {
+            try {
+                if (window.__feather_gpc_active) return;
+                window.__feather_gpc_active = true;
+                if (typeof Navigator !== 'undefined' && Navigator.prototype) {
+                    try {
+                        Object.defineProperty(Navigator.prototype, 'globalPrivacyControl', {
+                            get: function() { return true; },
+                            configurable: true,
+                            enumerable: true
+                        });
+                    } catch(e) {}
+                    try {
+                        Object.defineProperty(Navigator.prototype, 'doNotTrack', {
+                            get: function() { return '1'; },
+                            configurable: true,
+                            enumerable: true
+                        });
+                    } catch(e) {}
+                }
+                try {
+                    Object.defineProperty(window, 'doNotTrack', {
+                        get: function() { return '1'; },
+                        configurable: true,
+                        enumerable: true
+                    });
+                } catch(e) {}
+            } catch(e) {}
+        })();
+        """.trimIndent()
+    }
+
+    /**
      * Injects CSS and JS overrides to ensure websites adhere to the browser's theme setting.
      */
     fun generateThemeScript(isDark: Boolean): String {
@@ -969,6 +1007,134 @@ object FingerprintScriptGenerator {
                     } catch(e) {}
                 }
             } catch(e) {}
+        })();
+        """.trimIndent()
+    }
+
+    /**
+     * Generates a safe, lightweight Cookie Consent Banner Auto-Decliner & Hider script.
+     *
+     * Strategy:
+     * 1. Prefers clicking explicit "Reject All / Necessary Only" controls on standard CMPs
+     *    (OneTrust, Cookiebot, Quantcast, Didomi, Sourcepoint, Osano, Klaro, Complianz, TrustArc)
+     *    so the site records the refusal cookie natively and never re-prompts.
+     * 2. Hides remaining well-known non-functional cookie banner overlays via targeted CSS selectors
+     *    and restores `overflow: auto` ONLY when a known CMP body-lock class was present.
+     */
+    fun generateCookieBannerHiderScript(): String {
+        return """
+        (function() {
+            try {
+                if (window.__feather_cookie_guard_active) return;
+                window.__feather_cookie_guard_active = true;
+
+                const REJECT_SELECTORS = [
+                    '#onetrust-reject-all-handler',
+                    '.ot-pc-refuse-all-handler',
+                    '#CybotCookiebotDialogBodyButtonDecline',
+                    '#CybotCookiebotDialogBodyLevelButtonLevelOptinDeclineAll',
+                    '#didomi-notice-disagree-button',
+                    '.qc-cmp2-summary-buttons button[mode="secondary"]',
+                    '.osano-cm-denyAll',
+                    '.osano-cm-deny',
+                    '.cmplz-deny',
+                    '.cn-decline',
+                    '#cookie-notice .cn-set-cookie[data-cookie-set="reject"]',
+                    '.klaro .cn-decline',
+                    'button[data-testid="uc-deny-all-button"]',
+                    'button[id*="cookie"][id*="reject" i]',
+                    'button[class*="cookie"][class*="reject" i]',
+                    'button[id*="consent"][id*="reject" i]',
+                    'button[aria-label="Reject all" i]',
+                    'button[aria-label="Reject non-essential" i]',
+                    'button[aria-label="Necessary cookies only" i]'
+                ];
+
+                const BANNER_HIDE_CSS = [
+                    '#onetrust-consent-sdk',
+                    '#CybotCookiebotDialog',
+                    '#CybotCookiebotDialogBodyUnderlay',
+                    '#didomi-host',
+                    '#qc-cmp2-container',
+                    '.osano-cm-window',
+                    '#truste-consent-track',
+                    '#cookie-law-info-bar',
+                    '.cli-modal-backdrop',
+                    '#cookie-notice',
+                    '.cc-window.cc-banner',
+                    '.cc-window.cc-floating',
+                    '#gdpr-cookie-message',
+                    '#usercentrics-root'
+                ].join(',\n') + ' { display: none !important; visibility: hidden !important; pointer-events: none !important; opacity: 0 !important; }';
+
+                const BODY_LOCK_CLASSES = [
+                    'onetrust-no-scroll',
+                    'didomi-popup-open',
+                    'CybotCookiebotDialogBodyScrollLock',
+                    'qc-cmp-ui-showing',
+                    'sp-message-open'
+                ];
+
+                function unlockScrollIfLockedByCmp() {
+                    try {
+                        const html = document.documentElement;
+                        const body = document.body;
+                        let hadLock = false;
+                        for (let i = 0; i < BODY_LOCK_CLASSES.length; i++) {
+                            const cls = BODY_LOCK_CLASSES[i];
+                            if (html && html.classList && html.classList.contains(cls)) {
+                                html.classList.remove(cls);
+                                hadLock = true;
+                            }
+                            if (body && body.classList && body.classList.contains(cls)) {
+                                body.classList.remove(cls);
+                                hadLock = true;
+                            }
+                        }
+                        if (hadLock) {
+                            if (html && html.style.overflow === 'hidden') html.style.overflow = '';
+                            if (body && body.style.overflow === 'hidden') body.style.overflow = '';
+                        }
+                    } catch (e) {}
+                }
+
+                function tryRejectOrHide() {
+                    try {
+                        for (let i = 0; i < REJECT_SELECTORS.length; i++) {
+                            const btn = document.querySelector(REJECT_SELECTORS[i]);
+                            if (btn && typeof btn.click === 'function' && !btn.__feather_clicked) {
+                                btn.__feather_clicked = true;
+                                btn.click();
+                                unlockScrollIfLockedByCmp();
+                                return true;
+                            }
+                        }
+                        if (!document.getElementById('__feather_cookie_css')) {
+                            const root = document.head || document.documentElement;
+                            if (root) {
+                                const style = document.createElement('style');
+                                style.id = '__feather_cookie_css';
+                                style.textContent = BANNER_HIDE_CSS;
+                                root.appendChild(style);
+                            }
+                        }
+                        unlockScrollIfLockedByCmp();
+                    } catch (e) {}
+                    return false;
+                }
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', function() {
+                        tryRejectOrHide();
+                        setTimeout(tryRejectOrHide, 650);
+                        setTimeout(tryRejectOrHide, 1800);
+                    }, { once: true });
+                } else {
+                    tryRejectOrHide();
+                    setTimeout(tryRejectOrHide, 650);
+                    setTimeout(tryRejectOrHide, 1800);
+                }
+            } catch (e) {}
         })();
         """.trimIndent()
     }

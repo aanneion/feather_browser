@@ -67,10 +67,16 @@ fun BrowserScreen(
     val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
     val adBlockExceptions by viewModel.adBlockExceptions.collectAsStateWithLifecycle()
     val quickShortcuts by viewModel.quickShortcuts.collectAsStateWithLifecycle()
+    val stripTrackingParams by viewModel.stripTrackingParams.collectAsStateWithLifecycle()
+    val sendPrivacySignals by viewModel.sendPrivacySignals.collectAsStateWithLifecycle()
+    val hideCookieBanners by viewModel.hideCookieBanners.collectAsStateWithLifecycle()
+    val pageTextZoom by viewModel.pageTextZoom.collectAsStateWithLifecycle()
+    val canReopenClosedTab by viewModel.canReopenClosedTab.collectAsStateWithLifecycle()
     val activeMediaTabId by MediaSessionManager.activeMediaTabId.collectAsStateWithLifecycle()
 
     var showMenuSheet by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
+    var qrCodePayload by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     LaunchedEffect(activeSheet == ActiveSheet.DOWNLOADS) {
         if (activeSheet == ActiveSheet.DOWNLOADS) {
@@ -197,7 +203,11 @@ fun BrowserScreen(
                                         onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
                                         onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
                                         onOpenMenu = { dismissAddressBar(); showMenuSheet = true },
-                                        onGoHome = { dismissAddressBar(); viewModel.goHome() }
+                                        onGoHome = { dismissAddressBar(); viewModel.goHome() },
+                                        onSwipeTab = { next -> viewModel.switchAdjacentTab(next) },
+                                        stripTrackingParams = stripTrackingParams,
+                                        localBookmarks = bookmarks,
+                                        localHistory = history
                                     )
                                 }
                             }
@@ -272,7 +282,11 @@ fun BrowserScreen(
                             onStop = { viewModel.stopLoading() },
                             onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
                             onEditingChanged = { isAddressBarEditing = it },
-                            onOpenReaderMode = { viewModel.openReaderMode() }
+                            onOpenReaderMode = { viewModel.openReaderMode() },
+                            onSwipeTab = { next -> viewModel.switchAdjacentTab(next) },
+                            stripTrackingParams = stripTrackingParams,
+                            localBookmarks = bookmarks,
+                            localHistory = history
                         )
                     } else {
                         BrowserBottomBar(
@@ -392,6 +406,10 @@ fun BrowserScreen(
                                     isActive = isActive,
                                     isPrivate = tab.isPrivate,
                                     profileIdentityVersion = profileIdentityVersion,
+                                    stripTrackingParams = stripTrackingParams,
+                                    sendPrivacySignals = sendPrivacySignals,
+                                    hideCookieBanners = hideCookieBanners,
+                                    pageTextZoom = pageTextZoom,
                                     isAddressBarEditing = isAddressBarEditing,
                                     onDismissAddressBar = {
                                         if (isAddressBarEditing) {
@@ -458,6 +476,8 @@ fun BrowserScreen(
                 onNewTab = { viewModel.createNewTab() },
                 onCloseAllTabs = { viewModel.closeAllTabs() },
                 onTogglePrivateMode = { viewModel.togglePrivateMode() },
+                canReopenClosedTab = canReopenClosedTab,
+                onReopenClosedTab = { viewModel.reopenLastClosedTab() },
                 onDismiss = { viewModel.dismissSheet() },
                 modifier = Modifier.fillMaxSize()
             )
@@ -496,6 +516,14 @@ fun BrowserScreen(
                 onToggleBackgroundPlay = { viewModel.setBackgroundPlay(it) },
                 downloadProvider = downloadProvider,
                 onDownloadProviderChange = { viewModel.setDownloadProvider(it) },
+                stripTrackingParams = stripTrackingParams,
+                onToggleStripTrackingParams = { viewModel.setStripTrackingParams(it) },
+                sendPrivacySignals = sendPrivacySignals,
+                onToggleSendPrivacySignals = { viewModel.setSendPrivacySignals(it) },
+                hideCookieBanners = hideCookieBanners,
+                onToggleHideCookieBanners = { viewModel.setHideCookieBanners(it) },
+                pageTextZoom = pageTextZoom,
+                onPageTextZoomChange = { viewModel.setPageTextZoom(it) },
                 onOpenClearData = { showClearDataDialog = true },
                 onDismiss = { viewModel.dismissSheet() },
                 modifier = Modifier.fillMaxSize()
@@ -518,6 +546,7 @@ fun BrowserScreen(
                     viewModel.dismissSheet()
                 },
                 onDeleteBookmark = { viewModel.deleteBookmark(it) },
+                onUpdateBookmark = { viewModel.updateBookmark(it) },
                 onExportBookmarks = {
                     viewModel.exportBookmarksHtml(currentProfile?.displayName ?: "Feather")
                 },
@@ -608,6 +637,10 @@ fun BrowserScreen(
                 activeTab = activeTabState,
                 isGlobalBlockerEnabled = isAdBlockEnabled,
                 isSiteWhitelisted = isSiteWhitelisted,
+                stripTrackingParams = stripTrackingParams,
+                onToggleStripTrackingParams = { viewModel.setStripTrackingParams(it) },
+                hideCookieBanners = hideCookieBanners,
+                onToggleHideCookieBanners = { viewModel.setHideCookieBanners(it) },
                 onToggleGlobalBlocker = { viewModel.setAdBlockEnabled(it) },
                 onToggleSiteException = { viewModel.toggleCurrentSiteAdBlockException() },
                 onDismiss = { viewModel.dismissSheet() }
@@ -630,8 +663,9 @@ fun BrowserScreen(
                 viewModel.openLinkInNewTab(url = url, openInBackground = false, isPrivate = true)
             },
             onCopyLinkAddress = { url ->
+                val cleanUrl = com.example.privacy.UrlSanitizer.sanitize(url, stripTrackingParams)
                 val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", url))
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("URL", cleanUrl))
                 android.widget.Toast.makeText(context, "Link address copied", android.widget.Toast.LENGTH_SHORT).show()
             },
             onCopyLinkText = { text ->
@@ -640,11 +674,16 @@ fun BrowserScreen(
                 android.widget.Toast.makeText(context, "Link text copied", android.widget.Toast.LENGTH_SHORT).show()
             },
             onShareLink = { url ->
+                val cleanUrl = com.example.privacy.UrlSanitizer.sanitize(url, stripTrackingParams)
                 val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                     type = "text/plain"
-                    putExtra(android.content.Intent.EXTRA_TEXT, url)
+                    putExtra(android.content.Intent.EXTRA_TEXT, cleanUrl)
                 }
                 context.startActivity(android.content.Intent.createChooser(shareIntent, "Share link"))
+            },
+            onShowQrCode = { url, title ->
+                val cleanUrl = com.example.privacy.UrlSanitizer.sanitize(url, stripTrackingParams)
+                qrCodePayload = cleanUrl to title
             },
             onOpenImageInNewTab = { imageUrl ->
                 viewModel.openLinkInNewTab(url = imageUrl, openInBackground = false)
@@ -681,8 +720,10 @@ fun BrowserScreen(
             isBookmarked = isBookmarked,
             isPrivateMode = isPrivateMode,
             hasActiveUrl = !isHome,
+            canReopenClosedTab = canReopenClosedTab,
             onNewTab = { viewModel.createNewTab() },
             onNewPrivateTab = { viewModel.togglePrivateMode() },
+            onReopenClosedTab = { viewModel.reopenLastClosedTab() },
             onOpenProfiles = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PROFILES) },
             onOpenReaderMode = { viewModel.openReaderMode() },
             onToggleBookmark = { viewModel.toggleBookmarkCurrentUrl() },
@@ -691,6 +732,18 @@ fun BrowserScreen(
             onOpenDownloads = { viewModel.openSheet(ActiveSheet.DOWNLOADS) },
             onStartFindInPage = { viewModel.startFindInPage() },
             onToggleDesktopMode = { viewModel.toggleDesktopMode() },
+            onSharePage = { viewModel.shareCurrentPage() },
+            onShowQrCode = {
+                val cleanUrl = com.example.privacy.UrlSanitizer.sanitize(currentUrl, stripTrackingParams)
+                if (cleanUrl.isNotBlank()) {
+                    qrCodePayload = cleanUrl to (activeTabState?.title ?: "")
+                }
+            },
+            onPrintPage = { viewModel.printCurrentPage() },
+            onSaveOfflinePage = { viewModel.saveCurrentPageOffline() },
+            onAddToHomeScreen = { viewModel.addCurrentPageToHomeScreen() },
+            pageTextZoom = pageTextZoom,
+            onPageTextZoomChange = { viewModel.setPageTextZoom(it) },
             onOpenPrivacyShield = { dismissAddressBar(); viewModel.openSheet(ActiveSheet.PRIVACY_SHIELD) },
             onOpenClearData = { showClearDataDialog = true },
             onOpenSettings = { viewModel.openSheet(ActiveSheet.SETTINGS) },
@@ -700,6 +753,14 @@ fun BrowserScreen(
                 activity?.finishAndRemoveTask()
             },
             onDismiss = { showMenuSheet = false }
+        )
+    }
+
+    qrCodePayload?.let { (qrUrl, qrTitle) ->
+        QrCodeDialog(
+            url = qrUrl,
+            title = qrTitle,
+            onDismiss = { qrCodePayload = null }
         )
     }
 
