@@ -563,6 +563,15 @@ fun BrowserScreen(
                 onToggleHideCookieBanners = { viewModel.setHideCookieBanners(it) },
                 pageTextZoom = pageTextZoom,
                 onPageTextZoomChange = { viewModel.setPageTextZoom(it) },
+                onOpenRepository = {
+                    val repoUrl = "https://github.com/aanneion/feather_browser"
+                    viewModel.dismissSheet()
+                    if (activeTabState?.url.isNullOrBlank() || activeTabState?.url == "about:blank") {
+                        viewModel.navigateTo(repoUrl)
+                    } else {
+                        viewModel.openLinkInNewTab(url = repoUrl, openInBackground = false, isPrivate = isPrivateMode)
+                    }
+                },
                 onOpenClearData = { showClearDataDialog = true },
                 onDismiss = { viewModel.dismissSheet() },
                 modifier = Modifier.fillMaxSize()
