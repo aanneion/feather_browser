@@ -7,6 +7,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +36,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -55,7 +58,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.*
+import com.example.data.model.Bookmark
 import com.example.data.model.BrowserProfile
+import com.example.data.model.HistoryItem
 import com.example.ui.theme.PrivateModePurple
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -93,12 +98,34 @@ fun UnifiedBottomCommandBar(
     onToggleBookmark: () -> Unit,
     modifier: Modifier = Modifier,
     onEditingChanged: ((Boolean) -> Unit)? = null,
-    onOpenReaderMode: (() -> Unit)? = null
+    onOpenReaderMode: (() -> Unit)? = null,
+    onSwipeTab: ((Boolean) -> Unit)? = null,
+    stripTrackingParams: Boolean = true,
+    localBookmarks: List<Bookmark> = emptyList(),
+    localHistory: List<HistoryItem> = emptyList()
 ) {
+    val context = LocalContext.current
     var isEditing by remember { mutableStateOf(false) }
     var inputText by remember(activeTab?.url) { mutableStateOf(TextFieldValue(activeTab?.url ?: "")) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingSuggestions by remember { mutableStateOf(false) }
+    var clipboardCandidate by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            clipboardCandidate = try {
+                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val raw = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+                raw?.takeIf { it.isNotBlank() && it.length <= 2048 }?.let {
+                    com.example.privacy.UrlSanitizer.sanitize(it, stripTrackingParams)
+                }
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            clipboardCandidate = null
+        }
+    }
 
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -212,10 +239,24 @@ fun UnifiedBottomCommandBar(
                 .padding(bottom = effectiveBottomInset)
                 .padding(horizontal = 10.dp, vertical = 6.dp)
         ) {
-            // Search Suggestions Overlay above the bottom dock
+            // Search, Bangs, Clipboard & Local Omnibox Suggestions Overlay above the bottom dock
         val trimmedQuery = inputText.text.trim()
-        val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
-            (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
+        val bangMatch = remember(trimmedQuery) { OmniboxBangs.resolve(trimmedQuery) }
+        val localMatches = remember(trimmedQuery, localBookmarks, localHistory, isPrivateMode) {
+            OmniboxMatcher.matchLocalSuggestions(
+                query = trimmedQuery,
+                bookmarks = localBookmarks,
+                history = localHistory,
+                isPrivateMode = isPrivateMode,
+                maxResults = 3
+            )
+        }
+        val effectiveClip = clipboardCandidate?.takeIf { it != trimmedQuery && it != activeTab?.url }
+        val shouldShowSuggestions = isEditing && (
+            effectiveClip != null ||
+                (trimmedQuery.isNotBlank() &&
+                    (bangMatch != null || localMatches.isNotEmpty() || suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty()))
+            )
 
         AnimatedVisibility(
             visible = shouldShowSuggestions,
@@ -282,8 +323,111 @@ fun UnifiedBottomCommandBar(
                             .fillMaxWidth()
                             .heightIn(max = suggestionsMaxHeight - 34.dp)
                     ) {
+                        // Clipboard Paste & Go / Paste & Search action
+                        if (effectiveClip != null) {
+                            val clipIsUrl = effectiveClip.startsWith("http://", ignoreCase = true) ||
+                                effectiveClip.startsWith("https://", ignoreCase = true) ||
+                                (!effectiveClip.contains(" ") && effectiveClip.contains("."))
+                            item(key = "dock_clipboard_paste_item") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            submitNavigation(effectiveClip)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                                        .testTag("dock_suggestion_paste_and_go"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.ContentPasteGo,
+                                        contentDescription = "Paste & Go",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = buildAnnotatedString {
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+                                            append(if (clipIsUrl) "Paste & Go: " else "Paste & Search: ")
+                                            pop()
+                                            append(effectiveClip.take(72))
+                                        },
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                    thickness = 0.5.dp
+                                )
+                            }
+                        }
+
+                        // Instant !bang shortcut indicator
+                        if (bangMatch != null) {
+                            item(key = "dock_bang_shortcut_item") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            submitNavigation(trimmedQuery)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                                        .testTag("dock_suggestion_bang_shortcut"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FlashOn,
+                                        contentDescription = "Bang Shortcut",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = buildAnnotatedString {
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+                                            append("${bangMatch.trigger} ")
+                                            pop()
+                                            if (bangMatch.queryText.isBlank()) {
+                                                append("Open ${bangMatch.providerName}")
+                                            } else {
+                                                append("Search ${bangMatch.providerName} for \"${bangMatch.queryText}\"")
+                                            }
+                                        },
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                    thickness = 0.5.dp
+                                )
+                            }
+                        }
+
                         // If user typed a direct URL, provide direct navigation option
-                        if (looksLikeUrl) {
+                        if (trimmedQuery.isNotBlank() && looksLikeUrl) {
                             item(key = "dock_direct_url_item") {
                                 Row(
                                     modifier = Modifier
@@ -330,45 +474,104 @@ fun UnifiedBottomCommandBar(
                         }
 
                         // Direct search query item
-                        item(key = "dock_direct_search_item") {
+                        if (trimmedQuery.isNotBlank() && bangMatch == null) {
+                            item(key = "dock_direct_search_item") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            submitNavigation(trimmedQuery)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = "Search",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Text(
+                                        text = buildAnnotatedString {
+                                            append("Search ")
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                                            append("\"$trimmedQuery\"")
+                                            pop()
+                                        },
+                                        fontSize = 14.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                if (localMatches.isNotEmpty() || suggestions.isNotEmpty()) {
+                                    HorizontalDivider(
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
+                                        thickness = 0.5.dp
+                                    )
+                                }
+                            }
+                        }
+
+                        // Instant Local Bookmarks & History matches
+                        itemsIndexed(
+                            items = localMatches,
+                            key = { index, match -> "dock_local_${match.kind}_$index-${match.url}" }
+                        ) { index, match ->
+                            val isBm = match.kind == OmniboxMatchKind.BOOKMARK
+                            val domainLabel = remember(match.url) { UrlUtils.extractDomain(match.url) }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        submitNavigation(trimmedQuery)
+                                        submitNavigation(match.url)
                                     }
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                                    .testTag("dock_local_omnibox_suggestion_$index"),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Search,
-                                    contentDescription = "Search",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    imageVector = if (isBm) Icons.Default.Bookmark else Icons.Default.History,
+                                    contentDescription = null,
+                                    tint = if (isBm) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = buildAnnotatedString {
-                                        append("Search ")
-                                        pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                                        append("\"$trimmedQuery\"")
-                                        pop()
-                                    },
-                                    fontSize = 14.sp,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = match.title,
+                                        fontSize = 13.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = domainLabel.ifBlank { match.url },
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    modifier = Modifier.size(16.dp)
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(15.dp)
                                 )
                             }
-                            if (suggestions.isNotEmpty()) {
+                            if (index < localMatches.lastIndex || suggestions.isNotEmpty()) {
                                 HorizontalDivider(
                                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
                                     thickness = 0.5.dp
@@ -673,7 +876,8 @@ fun UnifiedBottomCommandBar(
                             )
                         }
 
-                        // Center Address & Search Pill (Click to activate edit mode)
+                        // Center Address & Search Pill (Click to activate edit mode, swipe horizontally to switch tabs)
+                        val swipeThresholdPx = with(density) { 56.dp.toPx() }
                         Surface(
                             shape = RoundedCornerShape(20.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.75f),
@@ -682,6 +886,31 @@ fun UnifiedBottomCommandBar(
                                 .weight(1f)
                                 .height(40.dp)
                                 .clip(RoundedCornerShape(20.dp))
+                                .then(
+                                    if (onSwipeTab != null && tabCount > 1) {
+                                        Modifier.pointerInput(tabCount) {
+                                            var totalDragX = 0f
+                                            var triggered = false
+                                            detectHorizontalDragGestures(
+                                                onDragStart = {
+                                                    totalDragX = 0f
+                                                    triggered = false
+                                                },
+                                                onHorizontalDrag = { change, dragAmount ->
+                                                    totalDragX += dragAmount
+                                                    if (!triggered && kotlin.math.abs(totalDragX) >= swipeThresholdPx) {
+                                                        triggered = true
+                                                        change.consume()
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                        onSwipeTab(totalDragX < 0f)
+                                                    }
+                                                }
+                                            )
+                                        }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                                 .clickable {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     isEditing = true

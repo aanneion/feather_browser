@@ -60,6 +60,14 @@ fun SettingsScreen(
     onToggleBackgroundPlay: (Boolean) -> Unit,
     downloadProvider: DownloadProvider,
     onDownloadProviderChange: (DownloadProvider) -> Unit,
+    stripTrackingParams: Boolean = true,
+    onToggleStripTrackingParams: (Boolean) -> Unit = {},
+    sendPrivacySignals: Boolean = true,
+    onToggleSendPrivacySignals: (Boolean) -> Unit = {},
+    hideCookieBanners: Boolean = true,
+    onToggleHideCookieBanners: (Boolean) -> Unit = {},
+    pageTextZoom: Int = 100,
+    onPageTextZoomChange: (Int) -> Unit = {},
     onOpenClearData: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -300,6 +308,45 @@ fun SettingsScreen(
                             )
                         }
                     }
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 12.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.75f)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Default Web Page Text Zoom",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Adjusts text scale across websites ($pageTextZoom%)",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (pageTextZoom != 100) {
+                            TextButton(onClick = { onPageTextZoomChange(100) }) {
+                                Text("Reset", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    Slider(
+                        value = pageTextZoom.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = ((raw / 10f).toInt() * 10).coerceIn(50, 200)
+                            onPageTextZoomChange(snapped)
+                        },
+                        valueRange = 50f..200f,
+                        steps = 14
+                    )
                 }
             }
 
@@ -589,18 +636,105 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(
-                            checked = blockThirdPartyCookies,
-                            onCheckedChange = onToggleBlockThirdPartyCookies
+                    Switch(
+                        checked = blockThirdPartyCookies,
+                        onCheckedChange = onToggleBlockThirdPartyCookies
+                    )
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                )
+
+                // Strip Tracking Parameters
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Strip Link Tracking Parameters",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Automatically removes utm_*, fbclid, gclid, msclkid, and affiliate tracking tokens from URLs",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 12.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                    Switch(
+                        checked = stripTrackingParams,
+                        onCheckedChange = onToggleStripTrackingParams
                     )
+                }
 
-                    // HTTPS Enforcement
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                )
+
+                // Global Privacy Control (GPC) & Do Not Track
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Global Privacy Control (GPC) & DNT",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Sends navigator.globalPrivacyControl and Do Not Track signals asking sites not to sell or share data",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = sendPrivacySignals,
+                        onCheckedChange = onToggleSendPrivacySignals
+                    )
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                )
+
+                // Cookie Consent Banner Auto-Decliner
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Hide Cookie Consent Popups",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Automatically declines non-essential cookie banners (OneTrust, Cookiebot, Didomi, Quantcast) and hides consent overlays",
+                            fontSize = 11.5.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = hideCookieBanners,
+                        onCheckedChange = onToggleHideCookieBanners
+                    )
+                }
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+                )
+
+                // HTTPS Enforcement
                     Text(
                         text = "HTTPS Enforcement",
                         fontSize = 14.sp,

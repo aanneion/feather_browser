@@ -17,20 +17,32 @@ object BookmarkExportHelper {
         sb.append("<TITLE>Bookmarks</TITLE>\n")
         sb.append("<H1>Bookmarks</H1>\n")
         sb.append("<DL><p>\n")
-        sb.append("    <DT><H3 ADD_DATE=\"$nowSec\" LAST_MODIFIED=\"$nowSec\">")
-        sb.append(escapeHtml(profileName)).append(" Bookmarks</H3>\n")
-        sb.append("    <DL><p>\n")
-
-        for (bm in bookmarks) {
-            val addDate = if (bm.createdAt > 0) bm.createdAt / 1000 else nowSec
-            val safeUrl = escapeHtml(bm.url)
-            val safeTitle = escapeHtml(if (bm.title.isNotBlank()) bm.title else bm.url)
-            sb.append("        <DT><A HREF=\"").append(safeUrl)
-                .append("\" ADD_DATE=\"").append(addDate)
-                .append("\">").append(safeTitle).append("</A>\n")
+        val grouped = bookmarks.groupBy { it.folderName.ifBlank { "Mobile Bookmarks" } }
+        if (grouped.isEmpty()) {
+            sb.append("    <DT><H3 ADD_DATE=\"$nowSec\" LAST_MODIFIED=\"$nowSec\">")
+            sb.append(escapeHtml(profileName)).append(" Bookmarks</H3>\n")
+            sb.append("    <DL><p>\n    </DL><p>\n")
+        } else {
+            for ((folder, items) in grouped) {
+                val folderLabel = if (folder.equals("Mobile Bookmarks", ignoreCase = true) && grouped.size == 1) {
+                    "$profileName Bookmarks"
+                } else {
+                    folder
+                }
+                sb.append("    <DT><H3 ADD_DATE=\"$nowSec\" LAST_MODIFIED=\"$nowSec\">")
+                sb.append(escapeHtml(folderLabel)).append("</H3>\n")
+                sb.append("    <DL><p>\n")
+                for (bm in items) {
+                    val addDate = if (bm.createdAt > 0) bm.createdAt / 1000 else nowSec
+                    val safeUrl = escapeHtml(bm.url)
+                    val safeTitle = escapeHtml(if (bm.title.isNotBlank()) bm.title else bm.url)
+                    sb.append("        <DT><A HREF=\"").append(safeUrl)
+                        .append("\" ADD_DATE=\"").append(addDate)
+                        .append("\">").append(safeTitle).append("</A>\n")
+                }
+                sb.append("    </DL><p>\n")
+            }
         }
-
-        sb.append("    </DL><p>\n")
         sb.append("</DL><p>\n")
         return sb.toString()
     }
@@ -51,30 +63,53 @@ object BookmarkExportHelper {
 
     private fun parseHtmlBookmarks(html: String, targetProfileId: String): List<Bookmark> {
         val results = mutableListOf<Bookmark>()
-        val pattern = Pattern.compile(
-            "<a\\s+[^>]*?href=[\"']([^\"']+)[\"'][^>]*>(.*?)<\\/a>",
+        val tokenPattern = Pattern.compile(
+            "<h3\\b[^>]*>(.*?)<\\/h3>|<\\/dl>|<a\\s+[^>]*?href=[\"']([^\"']+)[\"'][^>]*>(.*?)<\\/a>",
             Pattern.CASE_INSENSITIVE or Pattern.DOTALL
         )
-        val matcher = pattern.matcher(html)
+        val matcher = tokenPattern.matcher(html)
 
+        val folderStack = ArrayDeque<String>()
         val seenUrls = mutableSetOf<String>()
         val now = System.currentTimeMillis()
 
         while (matcher.find()) {
-            val rawUrl = matcher.group(1)?.trim().orEmpty()
-            val rawTitle = matcher.group(2)?.trim().orEmpty()
+            val rawHeading = matcher.group(1)
+            val rawUrl = matcher.group(2)
+            val rawTitle = matcher.group(3)
 
-            if (rawUrl.isBlank() || rawUrl.startsWith("javascript:", ignoreCase = true)) {
+            if (rawHeading != null) {
+                val folderTitle = unescapeHtml(rawHeading.replace(Regex("<[^>]*>"), "")).trim()
+                if (folderTitle.isNotBlank()) {
+                    folderStack.addLast(folderTitle)
+                }
                 continue
             }
 
-            val unescapedUrl = unescapeHtml(rawUrl)
-            val unescapedTitle = unescapeHtml(rawTitle.replace(Regex("<[^>]*>"), "")).ifBlank { unescapedUrl }
+            val fullToken = matcher.group(0) ?: ""
+            if (fullToken.startsWith("</dl", ignoreCase = true)) {
+                if (folderStack.isNotEmpty()) {
+                    folderStack.removeLast()
+                }
+                continue
+            }
+
+            val cleanUrl = rawUrl?.trim().orEmpty()
+            if (cleanUrl.isBlank() || cleanUrl.startsWith("javascript:", ignoreCase = true)) {
+                continue
+            }
+
+            val unescapedUrl = unescapeHtml(cleanUrl)
+            val unescapedTitle = unescapeHtml((rawTitle ?: "").replace(Regex("<[^>]*>"), "")).trim().ifBlank { unescapedUrl }
+            val activeFolder = folderStack.lastOrNull()
+                ?.takeUnless { it.endsWith(" Bookmarks", ignoreCase = true) || it.equals("Bookmarks", ignoreCase = true) }
+                ?: "Mobile Bookmarks"
 
             if (seenUrls.add(unescapedUrl)) {
                 results.add(
                     Bookmark(
                         profileId = targetProfileId,
+                        folderName = activeFolder,
                         title = unescapedTitle,
                         url = unescapedUrl,
                         createdAt = now
@@ -102,10 +137,14 @@ object BookmarkExportHelper {
                 val item = array.optJSONObject(i) ?: continue
                 val url = item.optString("url", "").trim()
                 val title = item.optString("title", "").ifBlank { url }
+                val folder = item.optString("folder", item.optString("folderName", "Mobile Bookmarks"))
+                    .trim()
+                    .ifBlank { "Mobile Bookmarks" }
                 if (url.isNotBlank() && !url.startsWith("javascript:", ignoreCase = true) && seenUrls.add(url)) {
                     results.add(
                         Bookmark(
                             profileId = targetProfileId,
+                            folderName = folder,
                             title = title,
                             url = url,
                             createdAt = now

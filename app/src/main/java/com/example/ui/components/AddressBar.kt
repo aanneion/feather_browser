@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -30,7 +31,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -49,7 +52,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.browser.*
+import com.example.data.model.Bookmark
 import com.example.data.model.BrowserProfile
+import com.example.data.model.HistoryItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 
@@ -75,14 +80,36 @@ fun AddressBar(
     isBottomPosition: Boolean = false,
     onOpenReaderMode: (() -> Unit)? = null,
     onGoHome: (() -> Unit)? = null,
+    onSwipeTab: ((Boolean) -> Unit)? = null,
+    stripTrackingParams: Boolean = true,
+    localBookmarks: List<Bookmark> = emptyList(),
+    localHistory: List<HistoryItem> = emptyList(),
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var isEditing by remember { mutableStateOf(false) }
     var inputText by remember(activeTab?.url) { mutableStateOf(TextFieldValue(activeTab?.url ?: "")) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingSuggestions by remember { mutableStateOf(false) }
+    var clipboardCandidate by remember { mutableStateOf<String?>(null) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
+
+    LaunchedEffect(isEditing) {
+        if (isEditing) {
+            clipboardCandidate = try {
+                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                val raw = cm?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()?.trim()
+                raw?.takeIf { it.isNotBlank() && it.length <= 2048 }?.let {
+                    com.example.privacy.UrlSanitizer.sanitize(it, stripTrackingParams)
+                }
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            clipboardCandidate = null
+        }
+    }
 
     LaunchedEffect(isEditingExternally) {
         if (isEditingExternally == false && isEditing) {
@@ -218,7 +245,8 @@ fun AddressBar(
 
                 Spacer(modifier = Modifier.width(4.dp))
 
-                // Address / Search Bar Input Field with depth
+                // Address / Search Bar Input Field with depth + horizontal swipe to switch tabs
+                val swipeThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
                 Surface(
                     shape = RoundedCornerShape(26.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
@@ -228,6 +256,30 @@ fun AddressBar(
                     modifier = Modifier
                         .weight(1f)
                         .height(46.dp)
+                        .then(
+                            if (!isEditing && onSwipeTab != null && tabCount > 1) {
+                                Modifier.pointerInput(tabCount) {
+                                    var totalDragX = 0f
+                                    var triggered = false
+                                    detectHorizontalDragGestures(
+                                        onDragStart = {
+                                            totalDragX = 0f
+                                            triggered = false
+                                        },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            totalDragX += dragAmount
+                                            if (!triggered && kotlin.math.abs(totalDragX) >= swipeThresholdPx) {
+                                                triggered = true
+                                                change.consume()
+                                                onSwipeTab(totalDragX < 0f)
+                                            }
+                                        }
+                                    )
+                                }
+                            } else {
+                                Modifier
+                            }
+                        )
                 ) {
                     Row(
                         modifier = Modifier
@@ -487,10 +539,24 @@ fun AddressBar(
                 thickness = 1.dp
             )
 
-            // Real-Time Google Search Suggestions Dropdown
+            // Real-Time Search, Bangs, Clipboard & Local Omnibox Suggestions Dropdown
             val trimmedQuery = inputText.text.trim()
-            val shouldShowSuggestions = isEditing && trimmedQuery.isNotBlank() &&
-                (suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty())
+            val bangMatch = remember(trimmedQuery) { OmniboxBangs.resolve(trimmedQuery) }
+            val localMatches = remember(trimmedQuery, localBookmarks, localHistory, isPrivateMode) {
+                OmniboxMatcher.matchLocalSuggestions(
+                    query = trimmedQuery,
+                    bookmarks = localBookmarks,
+                    history = localHistory,
+                    isPrivateMode = isPrivateMode,
+                    maxResults = 3
+                )
+            }
+            val effectiveClip = clipboardCandidate?.takeIf { it != trimmedQuery && it != activeTab?.url }
+            val shouldShowSuggestions = isEditing && (
+                effectiveClip != null ||
+                    (trimmedQuery.isNotBlank() &&
+                        (bangMatch != null || localMatches.isNotEmpty() || suggestions.isNotEmpty() || isLoadingSuggestions || trimmedQuery.isNotEmpty()))
+                )
 
             val density = LocalDensity.current
             val screenHeightDp = LocalConfiguration.current.screenHeightDp.dp
@@ -569,8 +635,55 @@ fun AddressBar(
                                 .fillMaxWidth()
                                 .heightIn(max = availableDropdownHeight)
                         ) {
+                            // Clipboard Paste & Go / Paste & Search action
+                            if (effectiveClip != null) {
+                                val clipIsUrl = effectiveClip.startsWith("http://", ignoreCase = true) ||
+                                    effectiveClip.startsWith("https://", ignoreCase = true) ||
+                                    (!effectiveClip.contains(" ") && effectiveClip.contains("."))
+                                item(key = "clipboard_paste_go_item") {
+                                    SuggestionRow(
+                                        icon = Icons.Outlined.ContentPasteGo,
+                                        iconTint = MaterialTheme.colorScheme.primary,
+                                        text = buildAnnotatedString {
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+                                            append(if (clipIsUrl) "Paste & Go: " else "Paste & Search: ")
+                                            pop()
+                                            append(effectiveClip.take(72))
+                                        },
+                                        trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
+                                        onTrailingClick = null,
+                                        onClick = { submitNavigation(effectiveClip) },
+                                        modifier = Modifier.testTag("suggestion_paste_and_go")
+                                    )
+                                }
+                            }
+
+                            // Instant !bang shortcut indicator
+                            if (bangMatch != null) {
+                                item(key = "bang_shortcut_item") {
+                                    SuggestionRow(
+                                        icon = Icons.Default.FlashOn,
+                                        iconTint = MaterialTheme.colorScheme.primary,
+                                        text = buildAnnotatedString {
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary))
+                                            append("${bangMatch.trigger} ")
+                                            pop()
+                                            if (bangMatch.queryText.isBlank()) {
+                                                append("Open ${bangMatch.providerName}")
+                                            } else {
+                                                append("Search ${bangMatch.providerName} for \"${bangMatch.queryText}\"")
+                                            }
+                                        },
+                                        trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
+                                        onTrailingClick = null,
+                                        onClick = { submitNavigation(trimmedQuery) },
+                                        modifier = Modifier.testTag("suggestion_bang_shortcut")
+                                    )
+                                }
+                            }
+
                             // If user typed a direct URL, provide direct navigation option
-                            if (looksLikeUrl) {
+                            if (trimmedQuery.isNotBlank() && looksLikeUrl) {
                                 item(key = "direct_url_item") {
                                     SuggestionRow(
                                         icon = Icons.Default.Public,
@@ -590,22 +703,56 @@ fun AddressBar(
                             }
 
                             // Direct search query item
-                            item(key = "direct_search_item") {
+                            if (trimmedQuery.isNotBlank() && bangMatch == null) {
+                                item(key = "direct_search_item") {
+                                    SuggestionRow(
+                                        icon = Icons.Default.Search,
+                                        iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        text = buildAnnotatedString {
+                                            append("Search ")
+                                            pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
+                                            append("\"$trimmedQuery\"")
+                                            pop()
+                                        },
+                                        trailingIcon = Icons.Default.NorthWest,
+                                        onTrailingClick = {
+                                            inputText = TextFieldValue(trimmedQuery, TextRange(trimmedQuery.length))
+                                        },
+                                        onClick = { submitNavigation(trimmedQuery) },
+                                        modifier = Modifier.testTag("suggestion_query_direct")
+                                    )
+                                }
+                            }
+
+                            // Instant Local Bookmarks & History matches (zero network latency)
+                            itemsIndexed(
+                                items = localMatches,
+                                key = { index, match -> "local_${match.kind}_$index-${match.url}" }
+                            ) { index, match ->
+                                val isBm = match.kind == OmniboxMatchKind.BOOKMARK
+                                val domainLabel = remember(match.url) { UrlUtils.extractDomain(match.url) }
                                 SuggestionRow(
-                                    icon = Icons.Default.Search,
-                                    iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    icon = if (isBm) Icons.Default.Bookmark else Icons.Default.History,
+                                    iconTint = if (isBm) Color(0xFFF59E0B) else MaterialTheme.colorScheme.primary,
                                     text = buildAnnotatedString {
-                                        append("Search ")
-                                        pushStyle(SpanStyle(fontWeight = FontWeight.Bold))
-                                        append("\"$trimmedQuery\"")
+                                        pushStyle(SpanStyle(fontWeight = FontWeight.SemiBold))
+                                        append(match.title)
                                         pop()
+                                        if (domainLabel.isNotBlank() && !match.title.equals(domainLabel, ignoreCase = true)) {
+                                            pushStyle(
+                                                SpanStyle(
+                                                    fontSize = 12.sp,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            )
+                                            append("  ·  $domainLabel")
+                                            pop()
+                                        }
                                     },
-                                    trailingIcon = Icons.Default.NorthWest,
-                                    onTrailingClick = {
-                                        inputText = TextFieldValue(trimmedQuery, TextRange(trimmedQuery.length))
-                                    },
-                                    onClick = { submitNavigation(trimmedQuery) },
-                                    modifier = Modifier.testTag("suggestion_query_direct")
+                                    trailingIcon = Icons.AutoMirrored.Filled.ArrowForward,
+                                    onTrailingClick = null,
+                                    onClick = { submitNavigation(match.url) },
+                                    modifier = Modifier.testTag("local_omnibox_suggestion_$index")
                                 )
                             }
 

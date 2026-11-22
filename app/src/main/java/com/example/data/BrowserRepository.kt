@@ -237,13 +237,29 @@ class BrowserRepository(
     }
 
     // Bookmarks
-    suspend fun addBookmark(profileId: String, title: String, url: String) = withContext(Dispatchers.IO) {
+    suspend fun addBookmark(
+        profileId: String,
+        title: String,
+        url: String,
+        folderName: String = "Mobile Bookmarks"
+    ) = withContext(Dispatchers.IO) {
+        val cleanFolder = folderName.trim().ifBlank { "Mobile Bookmarks" }
         val existing = database.bookmarkDao().getBookmarkByUrl(profileId, url)
         if (existing == null) {
             database.bookmarkDao().insertBookmark(
-                Bookmark(profileId = profileId, title = title, url = url)
+                Bookmark(profileId = profileId, folderName = cleanFolder, title = title, url = url)
             )
         }
+    }
+
+    suspend fun updateBookmark(bookmark: Bookmark) = withContext(Dispatchers.IO) {
+        database.bookmarkDao().updateBookmark(
+            bookmark.copy(
+                title = bookmark.title.trim().ifBlank { bookmark.url },
+                url = bookmark.url.trim(),
+                folderName = bookmark.folderName.trim().ifBlank { "Mobile Bookmarks" }
+            )
+        )
     }
 
     suspend fun deleteBookmark(bookmark: Bookmark) = withContext(Dispatchers.IO) {

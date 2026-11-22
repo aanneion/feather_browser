@@ -29,6 +29,10 @@ class BrowserPreferences(context: Context) {
         private const val KEY_TOTAL_TRACKERS_BLOCKED = "pref_total_trackers_blocked"
         private const val KEY_TOTAL_ADS_BLOCKED = "pref_total_ads_blocked"
         private const val KEY_INITIALIZED_SHORTCUT_PROFILES = "pref_initialized_shortcut_profiles"
+        private const val KEY_STRIP_TRACKING_PARAMS = "pref_strip_tracking_params"
+        private const val KEY_SEND_PRIVACY_SIGNALS = "pref_send_privacy_signals"
+        private const val KEY_HIDE_COOKIE_BANNERS = "pref_hide_cookie_banners"
+        private const val KEY_DEFAULT_TEXT_ZOOM = "pref_default_text_zoom"
     }
 
     fun getTotalBlockedCount(): Long {
@@ -198,5 +202,37 @@ class BrowserPreferences(context: Context) {
 
     fun setDownloadProvider(provider: DownloadProvider) {
         prefs.edit().putString(KEY_DOWNLOAD_PROVIDER, provider.name).apply()
+    }
+
+    fun isStripTrackingParamsEnabled(): Boolean {
+        return prefs.getBoolean(KEY_STRIP_TRACKING_PARAMS, true)
+    }
+
+    fun setStripTrackingParamsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_STRIP_TRACKING_PARAMS, enabled).apply()
+    }
+
+    fun isSendPrivacySignalsEnabled(): Boolean {
+        return prefs.getBoolean(KEY_SEND_PRIVACY_SIGNALS, true)
+    }
+
+    fun setSendPrivacySignalsEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SEND_PRIVACY_SIGNALS, enabled).apply()
+    }
+
+    fun isHideCookieBannersEnabled(): Boolean {
+        return prefs.getBoolean(KEY_HIDE_COOKIE_BANNERS, true)
+    }
+
+    fun setHideCookieBannersEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HIDE_COOKIE_BANNERS, enabled).apply()
+    }
+
+    fun getDefaultTextZoom(): Int {
+        return prefs.getInt(KEY_DEFAULT_TEXT_ZOOM, 100).coerceIn(50, 200)
+    }
+
+    fun setDefaultTextZoom(zoomPercent: Int) {
+        prefs.edit().putInt(KEY_DEFAULT_TEXT_ZOOM, zoomPercent.coerceIn(50, 200)).apply()
     }
 }

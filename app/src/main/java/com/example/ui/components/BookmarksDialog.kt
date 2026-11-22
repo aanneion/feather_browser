@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -18,13 +19,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.browser.UrlUtils
 import com.example.data.model.Bookmark
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -34,6 +35,7 @@ fun BookmarksScreen(
     profileName: String,
     onNavigate: (String) -> Unit,
     onDeleteBookmark: (Bookmark) -> Unit,
+    onUpdateBookmark: ((Bookmark) -> Unit)? = null,
     onExportBookmarks: () -> String = { "" },
     onImportBookmarks: (String) -> Unit = {},
     onDismiss: () -> Unit,
@@ -41,10 +43,32 @@ fun BookmarksScreen(
 ) {
     val context = LocalContext.current
     var searchQuery by remember { mutableStateOf("") }
-    val filteredBookmarks = remember(bookmarks, searchQuery) {
-        if (searchQuery.isBlank()) bookmarks
-        else bookmarks.filter {
-            it.title.contains(searchQuery, ignoreCase = true) || it.url.contains(searchQuery, ignoreCase = true)
+    var selectedFolder by remember { mutableStateOf("All") }
+    var bookmarkToEdit by remember { mutableStateOf<Bookmark?>(null) }
+
+    val availableFolders = remember(bookmarks) {
+        val distinct = bookmarks
+            .map { it.folderName.trim().ifBlank { "Mobile Bookmarks" } }
+            .distinct()
+        listOf("All") + distinct
+    }
+
+    // Reset selectedFolder if all items in that folder were deleted/moved
+    LaunchedEffect(availableFolders) {
+        if (selectedFolder != "All" && selectedFolder !in availableFolders) {
+            selectedFolder = "All"
+        }
+    }
+
+    val filteredBookmarks = remember(bookmarks, searchQuery, selectedFolder) {
+        bookmarks.filter { bm ->
+            val folderMatch = selectedFolder == "All" ||
+                bm.folderName.trim().ifBlank { "Mobile Bookmarks" }.equals(selectedFolder, ignoreCase = true)
+            val queryMatch = searchQuery.isBlank() ||
+                bm.title.contains(searchQuery, ignoreCase = true) ||
+                bm.url.contains(searchQuery, ignoreCase = true) ||
+                bm.folderName.contains(searchQuery, ignoreCase = true)
+            folderMatch && queryMatch
         }
     }
 
@@ -155,7 +179,7 @@ fun BookmarksScreen(
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search bookmarks...", fontSize = 13.sp) },
+                        placeholder = { Text("Search bookmarks or folders...", fontSize = 13.sp) },
                         leadingIcon = {
                             Icon(
                                 imageVector = Icons.Default.Search,
@@ -178,9 +202,43 @@ fun BookmarksScreen(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
                             .testTag("search_bookmarks_input")
                     )
+
+                    // Folder Filter Chips (visible when multiple folders or custom folders exist)
+                    if (availableFolders.size > 2 || (availableFolders.size == 2 && !availableFolders.contains("Mobile Bookmarks"))) {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(availableFolders, key = { it }) { folder ->
+                                val isSelected = selectedFolder.equals(folder, ignoreCase = true)
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = { selectedFolder = folder },
+                                    shape = RoundedCornerShape(10.dp),
+                                    leadingIcon = if (folder != "All") {
+                                        {
+                                            Icon(
+                                                imageVector = Icons.Outlined.Folder,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                    } else null,
+                                    label = {
+                                        Text(
+                                            text = folder,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
 
                     HorizontalDivider(
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
@@ -207,7 +265,11 @@ fun BookmarksScreen(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = if (searchQuery.isBlank()) "No bookmarks in this profile yet" else "No matching bookmarks",
+                        text = if (searchQuery.isBlank() && selectedFolder == "All") {
+                            "No bookmarks in this profile yet"
+                        } else {
+                            "No matching bookmarks"
+                        },
                         fontSize = 15.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -225,6 +287,7 @@ fun BookmarksScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 items(filteredBookmarks, key = { it.id }) { bm ->
+                    val folderLabel = bm.folderName.trim().ifBlank { "Mobile Bookmarks" }
                     Surface(
                         shape = RoundedCornerShape(14.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -271,13 +334,47 @@ fun BookmarksScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = bm.url,
-                                    fontSize = 11.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (!folderLabel.equals("Mobile Bookmarks", ignoreCase = true)) {
+                                        Surface(
+                                            shape = RoundedCornerShape(5.dp),
+                                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                                        ) {
+                                            Text(
+                                                text = folderLabel,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.primary,
+                                                maxLines = 1,
+                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(
+                                        text = bm.url,
+                                        fontSize = 11.5.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+
+                            if (onUpdateBookmark != null) {
+                                IconButton(
+                                    onClick = { bookmarkToEdit = bm },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("edit_bookmark_${bm.id}")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Edit,
+                                        contentDescription = "Edit bookmark",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
                             }
 
                             IconButton(
@@ -297,6 +394,109 @@ fun BookmarksScreen(
             }
         }
     }
+
+    bookmarkToEdit?.let { target ->
+        EditBookmarkDialog(
+            bookmark = target,
+            existingFolders = availableFolders.filter { it != "All" },
+            onSave = { updated ->
+                onUpdateBookmark?.invoke(updated)
+                bookmarkToEdit = null
+            },
+            onDismiss = { bookmarkToEdit = null }
+        )
+    }
+}
+
+@Composable
+private fun EditBookmarkDialog(
+    bookmark: Bookmark,
+    existingFolders: List<String>,
+    onSave: (Bookmark) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var title by remember(bookmark.id) { mutableStateOf(bookmark.title) }
+    var url by remember(bookmark.id) { mutableStateOf(bookmark.url) }
+    var folder by remember(bookmark.id) {
+        mutableStateOf(bookmark.folderName.ifBlank { "Mobile Bookmarks" })
+    }
+
+    val suggestedFolders = remember(existingFolders) {
+        (listOf("Mobile Bookmarks", "Reading List", "Work", "Dev & Docs") + existingFolders)
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(6)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Bookmark", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Title") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("URL") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = folder,
+                    onValueChange = { folder = it },
+                    label = { Text("Folder") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(suggestedFolders, key = { it }) { presetFolder ->
+                        SuggestionChip(
+                            onClick = { folder = presetFolder },
+                            label = { Text(presetFolder, fontSize = 11.5.sp) }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val normalizedUrl = UrlUtils.parseInputToUrl(url)
+                    if (normalizedUrl.isNotBlank()) {
+                        onSave(
+                            bookmark.copy(
+                                title = title.trim().ifBlank { normalizedUrl },
+                                url = normalizedUrl,
+                                folderName = folder.trim().ifBlank { "Mobile Bookmarks" }
+                            )
+                        )
+                    }
+                },
+                enabled = url.isNotBlank()
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 // Backward-compatible alias
